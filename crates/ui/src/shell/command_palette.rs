@@ -251,6 +251,7 @@ impl Section {
 enum Command {
     NewChat,
     NewProject,
+    ImportHistory,
     Settings,
     Theme(AppearanceMode),
     ArchiveThread,
@@ -261,6 +262,7 @@ impl Command {
         match self {
             Self::NewChat => "New chat",
             Self::NewProject => "New project",
+            Self::ImportHistory => "Import Codex / Claude Code sessions…",
             Self::Settings => "Open settings",
             Self::Theme(AppearanceMode::System) => "Switch to system theme",
             Self::Theme(AppearanceMode::Light) => "Switch to light theme",
@@ -273,6 +275,7 @@ impl Command {
         match self {
             Self::NewChat => icons::PEN_NEW_SQUARE,
             Self::NewProject => icons::FOLDER,
+            Self::ImportHistory => icons::CLOCK_CIRCLE,
             Self::Settings => icons::SETTINGS,
             Self::Theme(mode) => mode.icon(),
             Self::ArchiveThread => icons::ARCHIVE_MINIMALISTIC,
@@ -362,6 +365,7 @@ fn commands_for(query: &str, is_dark: bool, can_archive: bool) -> Vec<Command> {
     [
         Command::NewChat,
         Command::NewProject,
+        Command::ImportHistory,
         Command::Settings,
         Command::Theme(if is_dark {
             AppearanceMode::Light
@@ -869,6 +873,14 @@ impl Shell {
         match row.kind {
             RowKind::Command(Command::NewChat) => self.open_new_session(None, cx),
             RowKind::Command(Command::NewProject) => self.open_add_space(cx),
+            RowKind::Command(Command::ImportHistory) => self.open_history_import(
+                &super::ImportHistory {
+                    source: None,
+                    all: false,
+                },
+                window,
+                cx,
+            ),
             RowKind::Command(Command::Settings) => self.open_last_settings(cx),
             RowKind::Command(Command::Theme(_)) => unreachable!(),
             RowKind::Command(Command::ArchiveThread) => self.archive_selected_chat(cx),
@@ -919,6 +931,7 @@ impl Shell {
         let id = match command {
             Command::NewChat => ShortcutId::NewSession,
             Command::NewProject => ShortcutId::NewProject,
+            Command::ImportHistory => return None,
             Command::Settings => return Some(crate::settings::badge_combo("mod-,")),
             Command::ArchiveThread => ShortcutId::ArchiveSession,
             Command::Theme(_) => return None,
@@ -2759,6 +2772,7 @@ mod tests {
             vec![
                 Command::NewChat,
                 Command::NewProject,
+                Command::ImportHistory,
                 Command::Settings,
                 Command::Theme(AppearanceMode::Light)
             ]
