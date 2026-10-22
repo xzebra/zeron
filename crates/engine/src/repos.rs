@@ -6,8 +6,9 @@
 //! the user points us; cloned/created ones land in `{data_dir}/repos`. Worktrees are
 //! created under `~/.zeron/worktrees/<repoName>/<worktreeName>` (NOT the data
 //! dir — worktrees are user-facing working checkouts), with an auto-generated name +
-//! matching `zeron/<name>` branch. Device preferences can choose another root;
-//! `ZERON_WORKTREES_DIR` takes precedence over those preferences.
+//! matching `zeron/<name>` branch. Device preferences can choose another root
+//! and branch prefix; `ZERON_WORKTREES_DIR` and `ZERON_WORKTREE_BRANCH_PREFIX`
+//! take precedence over those preferences.
 //!
 //! All git access is via subprocess (`tokio::process`) — never libgit2.
 
@@ -185,7 +186,8 @@ impl Repos {
 
     /// Device preferences live in `data_dir`. New worktrees use the custom
     /// location or `~/.zeron/worktrees`; a nonempty `$ZERON_WORKTREES_DIR`
-    /// overrides both (including test isolation).
+    /// overrides both (including test isolation). A set (even empty)
+    /// `$ZERON_WORKTREE_BRANCH_PREFIX` likewise overrides the branch prefix.
     pub fn new(data_dir: &Path, device_id: &str) -> Self {
         Self::with_worktree_preferences(
             data_dir,
@@ -194,12 +196,13 @@ impl Repos {
             std::env::var_os("ZERON_WORKTREES_DIR")
                 .filter(|s| !s.is_empty())
                 .map(PathBuf::from),
+            std::env::var("ZERON_WORKTREE_BRANCH_PREFIX").ok(),
         )
     }
 
     /// Explicit default worktree root, without the environment override (tests).
     pub fn with_worktrees_root(data_dir: &Path, device_id: &str, worktrees_root: PathBuf) -> Self {
-        Self::with_worktree_preferences(data_dir, device_id, worktrees_root, None)
+        Self::with_worktree_preferences(data_dir, device_id, worktrees_root, None, None)
     }
 
     fn with_worktree_preferences(
@@ -207,6 +210,7 @@ impl Repos {
         device_id: &str,
         worktrees_root: PathBuf,
         environment_override: Option<PathBuf>,
+        branch_prefix_override: Option<String>,
     ) -> Self {
         Self {
             inner: std::sync::Arc::new(ReposInner {
@@ -216,7 +220,8 @@ impl Repos {
                     data_dir,
                     worktrees_root,
                     environment_override,
-                ),
+                )
+                .with_branch_prefix_override(branch_prefix_override),
                 http: reqwest::Client::builder()
                     .timeout(GITHUB_AVATAR_TIMEOUT)
                     .user_agent("Comet-Git-History")
@@ -1344,8 +1349,9 @@ impl Repos {
     // ── worktrees ───────────────────────────────────────────────────────────
 
     /// `git worktree add` an isolated checkout under
-    /// `{worktrees_root}/<repoName>/<generatedName>`, on a fresh `zeron/<name>`
-    /// branch off `branch`, marked as Zeron's (see [`zeron_name_key`]).
+    /// `{worktrees_root}/<repoName>/<generatedName>`, on a fresh
+    /// `<branchPrefix><name>` branch off `branch`, marked as Zeron's (see
+    /// [`zeron_name_key`]).
     pub async fn create_worktree(
         &self,
         repo_path: &Path,
@@ -1372,6 +1378,7 @@ impl Repos {
                 repo_path.display()
             )));
         }
+        let prefix = self.inner.worktrees.branch_prefix();
         // Auto-generate a name colliding with neither an existing dir nor branch.
         let existing: HashSet<String> = self
             .branches(repo_path)
@@ -1391,7 +1398,8 @@ impl Repos {
                 ADJECTIVES[(seed % ADJECTIVES.len() as u64) as usize],
                 NOUNS[((seed / 31) % NOUNS.len() as u64) as usize]
             );
-            if !base.join(&candidate).exists() && !existing.contains(&format!("zeron/{candidate}"))
+            if !base.join(&candidate).exists()
+                && !existing.contains(&format!("{prefix}{candidate}"))
             {
                 name = Some(candidate);
                 break;
@@ -1403,7 +1411,7 @@ impl Repos {
         #[cfg(windows)]
         validate_windows_worktree_path(&path.to_string_lossy())?;
         std::fs::create_dir_all(&base)?;
-        let branch_name = format!("zeron/{name}");
+        let branch_name = format!("{prefix}{name}");
         #[cfg(windows)]
         self.add_worktree_in_two_steps(repo_path, &path, &branch_name, branch)
             .await?;
@@ -1558,7 +1566,9 @@ impl Repos {
     /// (port of zeron's `renameWorktreeBranch`). Guards:
     /// - respect an external checkout/rename: only act while the worktree is still
     ///   on `expected_branch`, Zeron's marker still names it, AND it is the
-    ///   original `zeron/<folderName>`;
+    ///   original `<prefix><folderName>`;
+    /// - the new name keeps the prefix the branch was created with, even if
+    ///   the setting changed since;
     /// - a title-slug collision gets a stable 6-hex suffix (hash of the worktree
     ///   path); a collision on THAT too fails.
     ///
@@ -1575,13 +1585,14 @@ impl Repos {
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
-        if current != expected_branch
-            || expected_branch != format!("zeron/{folder}")
-            || self.zeron_branch_name(worktree_path, &current).await? != Some(current.clone())
-        {
+        let prefix = match current.strip_suffix(folder.as_str()) {
+            Some(prefix) if !folder.is_empty() && current == expected_branch => prefix,
+            _ => return Ok(current),
+        };
+        if self.zeron_branch_name(worktree_path, &current).await? != Some(current.clone()) {
             return Ok(current);
         }
-        let preferred = worktree_branch_from_title(title);
+        let preferred = worktree_branch_from_title(prefix, title);
         if preferred == current {
             return Ok(current);
         }
@@ -2374,11 +2385,12 @@ fn zeron_name_key(branch: &str) -> String {
     format!("branch.{branch}.zeronName")
 }
 
-/// Turn a generated chat title into the semantic portion of a Zeron branch
-/// (port of zeron's `worktreeBranchFromTitle`). Zeron NFKD-normalizes accented
-/// letters first; native keeps it ASCII-only (generated titles are Title Case
-/// English), so non-ASCII characters collapse into the `-` separator.
-pub fn worktree_branch_from_title(title: &str) -> String {
+/// Turn a generated chat title into the semantic portion of a Zeron branch,
+/// after `prefix` (port of zeron's `worktreeBranchFromTitle`). Zeron
+/// NFKD-normalizes accented letters first; native keeps it ASCII-only
+/// (generated titles are Title Case English), so non-ASCII characters
+/// collapse into the `-` separator.
+pub fn worktree_branch_from_title(prefix: &str, title: &str) -> String {
     let mut slug = String::new();
     for c in title.trim().chars() {
         if matches!(c, '\'' | '"' | '`') {
@@ -2392,7 +2404,7 @@ pub fn worktree_branch_from_title(title: &str) -> String {
     }
     slug.truncate(48);
     let slug = slug.trim_matches('-');
-    format!("zeron/{}", if slug.is_empty() { "update" } else { slug })
+    format!("{prefix}{}", if slug.is_empty() { "update" } else { slug })
 }
 
 fn bounded_field(value: &str, max_chars: usize) -> String {

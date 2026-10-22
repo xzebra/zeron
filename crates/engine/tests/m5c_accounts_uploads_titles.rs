@@ -1110,15 +1110,49 @@ async fn rename_worktree_branch_guards_and_collisions() {
         .expect("unmarked");
     assert_eq!(unmarked, wt3.branch);
 
+    // A custom prefix names new branches, and a title rename keeps the
+    // prefix the branch was created with after the setting changes.
+    let set_prefix = async |prefix: &str| {
+        repos
+            .set_worktree_settings(zeron_proto::WorktreeSettings {
+                branch_prefix: Some(prefix.into()),
+                ..Default::default()
+            })
+            .await
+            .expect("save prefix")
+    };
+    set_prefix("jorge-").await;
+    let custom = repos
+        .create_worktree(&repo_dir, "main")
+        .await
+        .expect("custom worktree");
+    assert_eq!(custom.branch, format!("jorge-{}", custom.name));
+    set_prefix("").await;
+    let bare = repos
+        .create_worktree(&repo_dir, "main")
+        .await
+        .expect("unprefixed worktree");
+    assert_eq!(bare.branch, bare.name);
+    let renamed_custom = repos
+        .rename_worktree_branch(Path::new(&custom.path), &custom.branch, "Custom Prefix")
+        .await
+        .expect("custom rename");
+    assert_eq!(renamed_custom, "jorge-custom-prefix");
+    let renamed_bare = repos
+        .rename_worktree_branch(Path::new(&bare.path), &bare.branch, "No Prefix")
+        .await
+        .expect("unprefixed rename");
+    assert_eq!(renamed_bare, "no-prefix");
+
     // Slug edge cases.
     assert_eq!(
-        worktree_branch_from_title("  Fix `Login` Flow!  "),
+        worktree_branch_from_title("zeron/", "  Fix `Login` Flow!  "),
         "zeron/fix-login-flow"
     );
-    assert_eq!(worktree_branch_from_title("***"), "zeron/update");
+    assert_eq!(worktree_branch_from_title("zeron/", "***"), "zeron/update");
     assert_eq!(
-        worktree_branch_from_title("Cafe's Dark Mode"),
-        "zeron/cafes-dark-mode"
+        worktree_branch_from_title("", "Cafe's Dark Mode"),
+        "cafes-dark-mode"
     );
 }
 

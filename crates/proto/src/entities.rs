@@ -444,6 +444,9 @@ pub struct FolderListing {
     pub truncated: bool,
 }
 
+/// What new worktree branch names start with unless a device chooses otherwise.
+pub const DEFAULT_WORKTREE_BRANCH_PREFIX: &str = "zeron/";
+
 /// Device-local preferences, used only when creating a new worktree.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -451,6 +454,10 @@ pub struct WorktreeSettings {
     pub use_custom_directory: bool,
     /// Remembered even while the custom location is disabled.
     pub custom_directory: Option<String>,
+    /// What new worktree branch names start with; empty for none. Saving
+    /// `None` (as clients predating it do) keeps the saved prefix, and a
+    /// saved `None` means [`DEFAULT_WORKTREE_BRANCH_PREFIX`].
+    pub branch_prefix: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -461,6 +468,12 @@ pub struct WorktreeSettingsStatus {
     pub effective_directory: String,
     /// An explicit host environment override takes precedence over preferences.
     pub environment_override: Option<String>,
+    /// `None` from hosts predating the branch prefix setting.
+    #[serde(default)]
+    pub effective_branch_prefix: Option<String>,
+    /// Like `environment_override`, for the branch prefix.
+    #[serde(default)]
+    pub branch_prefix_environment_override: Option<String>,
 }
 
 /// `SearchHomeFolders`: folders anywhere under the host's home whose names

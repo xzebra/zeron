@@ -480,6 +480,7 @@ async fn worktree_location_supports_long_windows_files() {
         .set_worktree_settings(zeron_proto::WorktreeSettings {
             use_custom_directory: true,
             custom_directory: Some(destination.to_string_lossy().into_owned()),
+            branch_prefix: None,
         })
         .await
         .unwrap();
@@ -547,6 +548,7 @@ async fn worktree_location_rejects_unlaunchable_windows_destinations() {
         .set_worktree_settings(zeron_proto::WorktreeSettings {
             use_custom_directory: true,
             custom_directory: Some(destination.to_string_lossy().into_owned()),
+            branch_prefix: None,
         })
         .await
         .unwrap_err();
@@ -582,6 +584,7 @@ async fn worktree_location_rejects_unlaunchable_windows_destinations() {
         .set_worktree_settings(zeron_proto::WorktreeSettings {
             use_custom_directory: true,
             custom_directory: Some(near_limit.to_string_lossy().into_owned()),
+            branch_prefix: None,
         })
         .await
         .unwrap();

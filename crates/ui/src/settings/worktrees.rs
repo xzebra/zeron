@@ -1,10 +1,14 @@
-//! Settings → General: device-addressed worktree destination settings.
+//! Settings → General: device-addressed worktree destination and branch
+//! prefix settings.
 
-use gpui::{AnyElement, Context, Entity, Render, Task, Window, div, prelude::*, px};
-use zeron_proto::{FolderListing, WorktreeSettings, WorktreeSettingsStatus};
+use gpui::{AnyElement, Context, Entity, Render, Subscription, Task, Window, div, prelude::*, px};
+use zeron_proto::{
+    DEFAULT_WORKTREE_BRANCH_PREFIX, FolderListing, WorktreeSettings, WorktreeSettingsStatus,
+};
 use zeron_rpc::methods;
 
 use super::widgets;
+use crate::composer::{ComposerInput, ComposerInputEvent};
 use crate::icons;
 use crate::popover::Loadable;
 use crate::state::AppState;
@@ -25,10 +29,27 @@ pub(super) struct WorktreeSettingsCard {
     browsing: bool,
     folders: Loadable<FolderListing>,
     folder_task: Option<Task<()>>,
+    branch_prefix: Entity<ComposerInput>,
+    _branch_prefix_events: Subscription,
 }
 
 impl WorktreeSettingsCard {
     pub fn new(state: Entity<AppState>, cx: &mut Context<Self>) -> Self {
+        let branch_prefix = cx.new(|cx| {
+            ComposerInput::new("No prefix", cx)
+                .with_text_metrics(12.5, 16.0)
+                .with_single_line()
+                .with_tab_stop()
+        });
+        let branch_prefix_events =
+            cx.subscribe(
+                &branch_prefix,
+                |card: &mut Self, _, event, cx| match event {
+                    ComposerInputEvent::Submitted => card.save_branch_prefix(None, cx),
+                    ComposerInputEvent::Edited => cx.notify(),
+                    _ => {}
+                },
+            );
         let mut card = Self {
             state,
             target: None,
@@ -41,6 +62,8 @@ impl WorktreeSettingsCard {
             browsing: false,
             folders: Loadable::Idle,
             folder_task: None,
+            branch_prefix,
+            _branch_prefix_events: branch_prefix_events,
         };
         card.load(None, cx);
         card
@@ -177,6 +200,9 @@ impl WorktreeSettingsCard {
                 match result {
                     Ok(status) => {
                         card.enabled = status.settings.use_custom_directory;
+                        let prefix = status.effective_branch_prefix.clone().unwrap_or_default();
+                        card.branch_prefix
+                            .update(cx, |input, cx| input.set_text(prefix, cx));
                         card.settings = Loadable::Ready(status);
                         card.browsing = false;
                     }
@@ -233,7 +259,7 @@ impl WorktreeSettingsCard {
         let Some(saved) = self.saved() else {
             return;
         };
-        let changed = *saved != WorktreeSettings::default();
+        let changed = custom_location(saved);
         self.enabled = false;
         self.browsing = false;
         self.folder_task = None;
@@ -249,9 +275,33 @@ impl WorktreeSettingsCard {
             WorktreeSettings {
                 use_custom_directory: true,
                 custom_directory: Some(path),
+                branch_prefix: None,
             },
             cx,
         );
+    }
+
+    /// The prefix saves on its own: the location is sent back unchanged, so
+    /// it also works while ZERON_WORKTREES_DIR controls the location.
+    fn save_branch_prefix(&mut self, prefix: Option<String>, cx: &mut Context<Self>) {
+        let Some(status) = self.settings.ready() else {
+            return;
+        };
+        if self.saving
+            || status.effective_branch_prefix.is_none()
+            || status.branch_prefix_environment_override.is_some()
+        {
+            return;
+        }
+        let prefix = prefix.unwrap_or_else(|| self.branch_prefix.read(cx).text().trim().to_owned());
+        if status.effective_branch_prefix.as_deref() == Some(prefix.as_str()) {
+            return;
+        }
+        let settings = WorktreeSettings {
+            branch_prefix: Some(prefix),
+            ..status.settings.clone()
+        };
+        self.request(Some(settings), cx);
     }
 
     fn browse_folder(&mut self, cx: &mut Context<Self>) {
@@ -513,8 +563,8 @@ impl Render for WorktreeSettingsCard {
             .into_iter()
             .map(|text| div().truncate().child(text).into_any_element())
             .collect();
-        let resettable = !overridden
-            && (enabled || status.is_some_and(|s| s.settings != WorktreeSettings::default()));
+        let resettable =
+            !overridden && (enabled || status.is_some_and(|s| custom_location(&s.settings)));
 
         let controls = div()
             .flex_none()
@@ -602,15 +652,11 @@ impl Render for WorktreeSettingsCard {
             _ => self.error.clone(),
         };
         // Match the text inset of the shared settings block rows.
-        let detail = div()
-            .px(px(16.0))
-            .pb(px(16.0))
-            .when(self.browsing, |el| {
-                el.child(self.render_browser(&theme, cx))
-            })
-            .when_some(error.clone(), |el, error| {
-                el.child(widgets::error_strip(&theme, error).mt(px(8.0)))
-            });
+        let detail = || div().px(px(16.0)).pb(px(16.0));
+        let browser = self
+            .browsing
+            .then(|| detail().child(self.render_browser(&theme, cx)));
+        let branch_prefix = status.map(|status| self.render_branch_prefix(&theme, status, cx));
         let card = widgets::section_card(&theme)
             .mt_0()
             .child(
@@ -624,9 +670,120 @@ impl Render for WorktreeSettingsCard {
                     )
                     .child(controls),
             )
-            .when(self.browsing || error.is_some(), |card| card.child(detail));
+            .children(browser)
+            .children(branch_prefix)
+            .when_some(error, |card, error| {
+                card.child(detail().child(widgets::error_strip(&theme, error).mt(px(8.0))))
+            });
         widgets::section(&theme, "Worktrees", card).into_any_element()
     }
+}
+
+impl WorktreeSettingsCard {
+    /// Typed, not auto-completed: `feat/` and `jorge-` are both prefixes.
+    fn render_branch_prefix(
+        &self,
+        theme: &Theme,
+        status: &WorktreeSettingsStatus,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let overridden = status.branch_prefix_environment_override.is_some();
+        let effective = status.effective_branch_prefix.clone();
+        let interactive = effective.is_some() && !overridden && !self.saving;
+        let draft = self.branch_prefix.read(cx).text().trim().to_owned();
+        let mut meta = vec![match &effective {
+            Some(_) if interactive => format!("New branches look like {draft}swift-otter"),
+            Some(prefix) => format!("New branches look like {prefix}swift-otter"),
+            None => "Update Zeron on the selected device to configure the branch prefix".into(),
+        }];
+        if overridden {
+            meta.push("Set by ZERON_WORKTREE_BRANCH_PREFIX".into());
+        }
+        let meta = meta
+            .into_iter()
+            .map(|text| div().truncate().child(text).into_any_element())
+            .collect();
+        let dirty = interactive && effective.as_deref() != Some(draft.as_str());
+        let resettable =
+            interactive && !dirty && effective.as_deref() != Some(DEFAULT_WORKTREE_BRANCH_PREFIX);
+        let field = div()
+            .w(px(160.0))
+            .h(px(widgets::SELECT_HEIGHT))
+            .px(px(10.0))
+            .rounded(px(8.0))
+            .bg(widgets::select_fill(theme, false))
+            .flex()
+            .items_center()
+            .text_size(crate::typography::ui_rems(12.5))
+            .text_color(theme.text)
+            .map(|field| {
+                if interactive {
+                    field.child(div().flex_1().min_w_0().child(self.branch_prefix.clone()))
+                } else {
+                    field.opacity(0.5).child(
+                        div()
+                            .truncate()
+                            .child(effective.clone().unwrap_or_default()),
+                    )
+                }
+            });
+        let controls = div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .when(resettable, |row| {
+                row.child(
+                    widgets::action_button(theme, widgets::ActionTone::Quiet)
+                        .id("worktrees-branch-prefix-reset")
+                        .w(px(32.0))
+                        .px_0()
+                        .justify_center()
+                        .tab_index(0)
+                        .role(gpui::Role::Button)
+                        .aria_label("Use the default branch prefix")
+                        .tooltip(widgets::text_tooltip("Reset to default"))
+                        .focus_visible(|s| s.border_2().border_color(theme.accent))
+                        .child(
+                            icons::icon(icons::REFRESH)
+                                .size(px(14.0))
+                                .text_color(theme.text_muted),
+                        )
+                        .on_click(cx.listener(|card, _, _, cx| {
+                            card.save_branch_prefix(
+                                Some(DEFAULT_WORKTREE_BRANCH_PREFIX.to_owned()),
+                                cx,
+                            )
+                        })),
+                )
+            })
+            .child(field)
+            .when(dirty, |row| {
+                row.child(
+                    widgets::text_action(theme, widgets::ActionTone::Filled, "Save")
+                        .id("worktrees-branch-prefix-save")
+                        .tab_index(0)
+                        .role(gpui::Role::Button)
+                        .focus_visible(|s| s.border_2().border_color(theme.accent))
+                        .on_click(cx.listener(|card, _, _, cx| card.save_branch_prefix(None, cx))),
+                )
+            });
+        widgets::card_row(theme, false)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(160.0))
+                    .child(widgets::row_title(theme, "Branch prefix"))
+                    .child(widgets::meta_line(theme, meta)),
+            )
+            .child(controls)
+            .into_any_element()
+    }
+}
+
+/// Whether the location half of `settings` differs from the default.
+fn custom_location(settings: &WorktreeSettings) -> bool {
+    settings.use_custom_directory || settings.custom_directory.is_some()
 }
 
 fn description(theme: &Theme, text: &str) -> gpui::Div {

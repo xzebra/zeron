@@ -283,22 +283,24 @@ async fn delete_worktree_removes_only_branches_zeron_owns() {
         "user-renamed branch kept"
     );
 
-    // Marked branches outside zeron/ are Zeron's too.
+    // Branches made with a custom prefix are Zeron's too.
+    let set_prefix = async |prefix: &str| {
+        repos
+            .set_worktree_settings(zeron_proto::WorktreeSettings {
+                branch_prefix: Some(prefix.into()),
+                ..Default::default()
+            })
+            .await
+            .expect("save prefix")
+    };
+    set_prefix("feat/").await;
     let custom = repos.create_worktree(&repo_dir, "main").await.unwrap();
-    git(
-        Path::new(&custom.path),
-        &["branch", "-m", &custom.branch, "feat/custom"],
-    )
-    .await;
-    git(
-        &repo_dir,
-        &["config", "branch.feat/custom.zeronName", "feat/custom"],
-    )
-    .await;
+    assert_eq!(custom.branch, format!("feat/{}", custom.name));
     assert!(
-        !delete(&custom, "feat/custom").await,
+        !delete(&custom, &custom.branch).await,
         "marked branch deleted"
     );
+    set_prefix("zeron/").await;
 
     // Unmarked branches from older versions keep the zeron/ prefix rule.
     let legacy = repos.create_worktree(&repo_dir, "main").await.unwrap();

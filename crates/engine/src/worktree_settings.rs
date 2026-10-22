@@ -1,11 +1,12 @@
-//! Device-local worktree destinations. Existing chats retain their saved cwd.
+//! Device-local worktree destinations and branch prefixes. Existing chats
+//! retain their saved cwd and branch.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
-use zeron_proto::{WorktreeSettings, WorktreeSettingsStatus};
+use zeron_proto::{DEFAULT_WORKTREE_BRANCH_PREFIX, WorktreeSettings, WorktreeSettingsStatus};
 
 use crate::EngineError;
 
@@ -13,6 +14,7 @@ pub(crate) struct WorktreePreferences {
     path: PathBuf,
     default_root: PathBuf,
     environment_override: Option<PathBuf>,
+    branch_prefix_override: Option<String>,
     settings: Mutex<WorktreeSettings>,
 }
 
@@ -33,13 +35,43 @@ impl WorktreePreferences {
                         .as_deref()
                         .is_some_and(|path| !path.is_empty() && Path::new(path).is_absolute())
             })
+            .map(|mut settings| {
+                settings.branch_prefix = settings
+                    .branch_prefix
+                    .and_then(|prefix| normalize_branch_prefix(&prefix).ok());
+                settings
+            })
             .unwrap_or_default();
         Self {
             path,
             default_root,
             environment_override,
+            branch_prefix_override: None,
             settings: Mutex::new(settings),
         }
+    }
+
+    /// An explicit branch prefix that takes precedence over preferences.
+    pub fn with_branch_prefix_override(mut self, prefix: Option<String>) -> Self {
+        self.branch_prefix_override = prefix.and_then(|prefix| {
+            normalize_branch_prefix(&prefix)
+                .inspect_err(
+                    |error| tracing::warn!(%error, "ignoring worktree branch prefix override"),
+                )
+                .ok()
+        });
+        self
+    }
+
+    fn branch_prefix_for(&self, settings: &WorktreeSettings) -> String {
+        self.branch_prefix_override
+            .clone()
+            .or_else(|| settings.branch_prefix.clone())
+            .unwrap_or_else(|| DEFAULT_WORKTREE_BRANCH_PREFIX.to_string())
+    }
+
+    pub fn branch_prefix(&self) -> String {
+        self.branch_prefix_for(&self.settings.lock().unwrap_or_else(PoisonError::into_inner))
     }
 
     fn root_for(&self, settings: &WorktreeSettings) -> PathBuf {
@@ -73,6 +105,8 @@ impl WorktreePreferences {
                 .environment_override
                 .as_ref()
                 .map(|p| p.to_string_lossy().into_owned()),
+            effective_branch_prefix: Some(self.branch_prefix_for(&settings)),
+            branch_prefix_environment_override: self.branch_prefix_override.clone(),
             settings,
         }
     }
@@ -81,12 +115,31 @@ impl WorktreePreferences {
         &self,
         mut next: WorktreeSettings,
     ) -> Result<WorktreeSettingsStatus, EngineError> {
-        if self.environment_override.is_some() {
+        let current = self
+            .settings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        // A save that resends the current location (e.g. a branch prefix
+        // change) needs neither the location override lifted nor its disk.
+        let same_location = next.use_custom_directory == current.use_custom_directory
+            && next.custom_directory == current.custom_directory;
+        if self.environment_override.is_some() && !same_location {
             return Err(EngineError::Other(
                 "Worktree location is controlled by ZERON_WORKTREES_DIR on this device".into(),
             ));
         }
-        if next.use_custom_directory {
+        next.branch_prefix = match next.branch_prefix {
+            None => current.branch_prefix,
+            Some(_) if self.branch_prefix_override.is_some() => {
+                return Err(EngineError::Other(
+                    "Worktree branch prefix is controlled by ZERON_WORKTREE_BRANCH_PREFIX on this device"
+                        .into(),
+                ));
+            }
+            Some(prefix) => Some(normalize_branch_prefix(&prefix)?),
+        };
+        if next.use_custom_directory && !same_location {
             let path = next
                 .custom_directory
                 .clone()
@@ -170,6 +223,31 @@ fn validate_directory(value: &str) -> Result<PathBuf, EngineError> {
     Ok(path)
 }
 
+/// Trimmed `value`, if `<value><name>` passes `git check-ref-format --branch`
+/// for the lowercase `-`-joined names Zeron appends. No `/` is implied, so
+/// `feat` yields `featswift-otter`.
+fn normalize_branch_prefix(value: &str) -> Result<String, EngineError> {
+    let prefix = value.trim();
+    let name = format!("{prefix}name");
+    let valid = !name.starts_with(['-', '/'])
+        && !name.contains("..")
+        && !name.contains("//")
+        && !name.contains("@{")
+        && !name
+            .chars()
+            .any(|c| c.is_ascii_control() || " ~^:?*[\\".contains(c))
+        && name
+            .split('/')
+            .all(|part| !part.starts_with('.') && !part.ends_with(".lock"));
+    if valid {
+        Ok(prefix.to_string())
+    } else {
+        Err(EngineError::Other(format!(
+            "\"{prefix}\" can't start a Git branch name"
+        )))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,7 +256,82 @@ mod tests {
         WorktreeSettings {
             use_custom_directory: true,
             custom_directory: Some(path.to_string_lossy().into_owned()),
+            branch_prefix: None,
         }
+    }
+
+    fn prefix(prefix: &str) -> WorktreeSettings {
+        WorktreeSettings {
+            branch_prefix: Some(prefix.into()),
+            ..WorktreeSettings::default()
+        }
+    }
+
+    #[test]
+    fn branch_prefixes_follow_git_ref_rules() {
+        for (value, normalized) in [
+            ("zeron/", "zeron/"),
+            ("", ""),
+            ("  feat/ ", "feat/"),
+            ("feat", "feat"),
+            ("jorge-", "jorge-"),
+            ("team/jorge.", "team/jorge."),
+            ("a.lockb/", "a.lockb/"),
+        ] {
+            assert_eq!(normalize_branch_prefix(value).unwrap(), normalized);
+        }
+        for value in [
+            "-x", "/x", "a//", "a..b", "a b", "a~", "a^", "a:", "a?", "a*", "a[", "a\\", "a\tb",
+            "a@{", "a/.", ".a", "a.lock/", "a\u{7f}",
+        ] {
+            assert!(normalize_branch_prefix(value).is_err(), "reject {value:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn branch_prefix_persists_and_location_saves_keep_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let default = tmp.path().join("default");
+        let prefs = WorktreePreferences::open(tmp.path(), default.clone(), None);
+        assert_eq!(prefs.branch_prefix(), DEFAULT_WORKTREE_BRANCH_PREFIX);
+        assert!(prefs.set(prefix("bad prefix")).await.is_err());
+        let saved = prefs.set(prefix("")).await.unwrap();
+        assert_eq!(saved.effective_branch_prefix.as_deref(), Some(""));
+        // Clients that predate the prefix save locations without one.
+        let located = prefs.set(custom(&tmp.path().join("custom"))).await.unwrap();
+        assert_eq!(located.settings.branch_prefix.as_deref(), Some(""));
+        assert_eq!(
+            WorktreePreferences::open(tmp.path(), default.clone(), None).branch_prefix(),
+            ""
+        );
+        // A prefix save resends the location without revalidating it, so a
+        // disconnected folder doesn't block it.
+        std::fs::remove_dir_all(tmp.path().join("custom")).unwrap();
+        let renamed = prefs
+            .set(WorktreeSettings {
+                branch_prefix: Some("jorge/".into()),
+                ..located.settings
+            })
+            .await
+            .unwrap();
+        assert_eq!(prefs.branch_prefix(), "jorge/");
+        assert!(!tmp.path().join("custom").exists());
+        assert_eq!(renamed.effective_directory, located.effective_directory);
+        // ZERON_WORKTREES_DIR fixes the location, not the prefix.
+        let forced = WorktreePreferences::open(tmp.path(), default.clone(), Some(default.clone()));
+        let status = forced
+            .set(WorktreeSettings {
+                branch_prefix: Some("zeron/".into()),
+                ..renamed.settings
+            })
+            .await
+            .unwrap();
+        assert_eq!(status.effective_branch_prefix.as_deref(), Some("zeron/"));
+        // An explicit prefix override wins and can't be changed.
+        let overridden = WorktreePreferences::open(tmp.path(), default, None)
+            .with_branch_prefix_override(Some("ci-".into()));
+        assert_eq!(overridden.branch_prefix(), "ci-");
+        assert!(overridden.set(prefix("other/")).await.is_err());
     }
 
     #[tokio::test]
