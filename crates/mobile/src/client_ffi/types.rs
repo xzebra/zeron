@@ -596,6 +596,8 @@ impl From<&zc::FrontPage> for FrontPage {
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ProjectView {
     pub id: String,
+    pub icon_path: Option<String>,
+    pub custom_color_index: Option<u32>,
     pub name: String,
     pub path: String,
     pub color_index: u32,
@@ -618,6 +620,8 @@ pub struct ProjectView {
 impl From<&zc::ProjectView> for ProjectView {
     fn from(p: &zc::ProjectView) -> Self {
         Self {
+            icon_path: p.icon_path.clone(),
+            custom_color_index: p.custom_color_index,
             id: p.id.clone(),
             name: p.name.clone(),
             path: p.path.clone(),

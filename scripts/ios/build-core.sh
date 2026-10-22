@@ -49,7 +49,8 @@ LIB="$ROOT/target/$TARGET/$PROFILE/libzeron_mobile.a"
 cp -p "$LIB" "$OUT/libzeron_mobile.a"
 
 GEN="$OUT/gen"
-"$ROOT/target/mobile/uniffi-bindgen" generate --library "$LIB" --language swift --out-dir "$GEN" >/dev/null
+# UniFFI invokes cargo metadata too; Xcode does not include Cargo in PATH.
+PATH="$HOME/.cargo/bin:$PATH" "$ROOT/target/mobile/uniffi-bindgen" generate --library "$LIB" --language swift --out-dir "$GEN" >/dev/null
 cp "$GEN/zeron_coreFFI.h" "$OUT/include/zeron_coreFFI.h"
 cp "$GEN/zeron_coreFFI.modulemap" "$OUT/include/module.modulemap"
 # Only touch the Swift file when it changed so Xcode doesn't recompile it.

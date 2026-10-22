@@ -285,6 +285,8 @@ fn space(id: &str, device_id: &str, path: &str) -> Space {
         device_id: device_id.into(),
         path: path.into(),
         name: None,
+        icon_path: None,
+        color_index: None,
         git_detected: false,
         git_checked_at: None,
         checkout_id: None,
@@ -2299,4 +2301,87 @@ fn attaching_an_edge_after_local_only_writes_reseeds_them() {
     let mut doc = RegistryDoc::from_bytes(&doc.to_bytes().unwrap(), "dev-a").unwrap();
     doc.set_local_only(false);
     assert_eq!(doc.pending_len(), 0);
+}
+
+#[test]
+fn edit_project_syncs_artwork_and_name_across_checkouts() {
+    let mut ws = RegistryDoc::new("dev-a");
+    for (id, device) in [("clone-a", "dev-a"), ("clone-b", "dev-b")] {
+        let mut member = space(id, device, "/projects/repo");
+        member.repository_id = Some("commit:example".into());
+        ws.upsert_space(&member).unwrap();
+    }
+    ws.upsert_space(&space("other", "dev-a", "/projects/other"))
+        .unwrap();
+    assert!(
+        ws.edit_project(
+            "clone-b",
+            Some(" My App "),
+            Some(" apps/web/public/icon.png "),
+            Some(3)
+        )
+        .unwrap()
+    );
+    for id in ["clone-a", "clone-b"] {
+        let row = ws.space(id).unwrap().unwrap();
+        assert_eq!(row.name.as_deref(), Some("My App"));
+        assert_eq!(row.icon_path.as_deref(), Some("apps/web/public/icon.png"));
+        assert_eq!(row.color_index, Some(3));
+    }
+    let other = ws.space("other").unwrap().unwrap();
+    assert!(other.icon_path.is_none() && other.color_index.is_none());
+    let restored = RegistryDoc::from_bytes(&ws.to_bytes().unwrap(), "dev-a").unwrap();
+    assert_eq!(
+        restored
+            .space("clone-b")
+            .unwrap()
+            .unwrap()
+            .icon_path
+            .as_deref(),
+        Some("apps/web/public/icon.png")
+    );
+    assert!(
+        ws.edit_project("clone-a", Some("Bad"), Some("../outside.png"), None)
+            .is_err()
+    );
+    assert!(
+        ws.edit_project("clone-a", Some("Bad"), None, Some(8))
+            .is_err()
+    );
+    assert_eq!(
+        ws.space("clone-a").unwrap().unwrap().name.as_deref(),
+        Some("My App")
+    );
+    // Owner git refreshes must not erase user artwork.
+    ws.set_space_git(
+        "clone-a",
+        true,
+        Some("checkout"),
+        Some("commit:example"),
+        ts(5_000),
+    )
+    .unwrap();
+    assert_eq!(
+        ws.space("clone-a").unwrap().unwrap().icon_path.as_deref(),
+        Some("apps/web/public/icon.png")
+    );
+    // No name leaves it alone; a blank one restores the basename.
+    assert!(
+        ws.edit_project("clone-a", None, Some("logo.svg"), Some(1))
+            .unwrap()
+    );
+    let row = ws.space("clone-b").unwrap().unwrap();
+    assert_eq!(row.name.as_deref(), Some("My App"));
+    assert_eq!(row.icon_path.as_deref(), Some("logo.svg"));
+    assert!(
+        ws.edit_project("clone-a", Some(" "), Some(" "), None)
+            .unwrap()
+    );
+    for id in ["clone-a", "clone-b"] {
+        let row = ws.space(id).unwrap().unwrap();
+        assert!(row.name.is_none());
+        assert!(row.icon_path.is_none());
+        assert!(row.color_index.is_none());
+    }
+    assert!(!ws.edit_project("missing", None, None, None).unwrap());
 }

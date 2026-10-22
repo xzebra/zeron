@@ -848,6 +848,8 @@ impl WorkspaceHost {
             device_id: device_id.clone(),
             path: root.unwrap_or_else(|| path.to_string()),
             name: None,
+            icon_path: None,
+            color_index: None,
             git_detected: false,
             git_checked_at: None,
             checkout_id: None,
@@ -1053,6 +1055,8 @@ impl WorkspaceHost {
                 device_id: device_id.to_string(),
                 path: path.to_string(),
                 name,
+                icon_path: None,
+                color_index: None,
                 git_detected,
                 git_checked_at: None,
                 checkout_id: None,
@@ -1061,6 +1065,16 @@ impl WorkspaceHost {
             })
         })?;
         Ok(())
+    }
+
+    pub fn edit_project(
+        &self,
+        space_id: &str,
+        name: Option<&str>,
+        icon_path: Option<&str>,
+        color_index: Option<u32>,
+    ) -> Result<bool, EngineError> {
+        Ok(self.mutate(|doc| doc.edit_project(space_id, name, icon_path, color_index))?)
     }
 
     pub fn rename_space(&self, space_id: &str, name: Option<&str>) -> Result<bool, EngineError> {

@@ -34,6 +34,7 @@ mod demo;
 pub mod error;
 pub mod events;
 mod live;
+mod project_icon;
 pub mod rpc;
 pub mod runtime;
 pub mod session;
