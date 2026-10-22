@@ -708,6 +708,7 @@ pub struct EngineRpc {
     updater: Option<zeron_update::Updater>,
     harness_updates: Option<crate::harness_updates::HarnessUpdateCoordinator>,
     local_import: Option<crate::local_import::LocalImporter>,
+    history_import: Option<crate::history_import::HistoryImporter>,
     engine_info: EngineInfo,
 }
 
@@ -756,6 +757,7 @@ impl EngineRpc {
             updater: None,
             harness_updates: None,
             local_import: None,
+            history_import: None,
             engine_info,
         }
     }
@@ -797,6 +799,12 @@ impl EngineRpc {
         self
     }
 
+    /// Attach the Codex / Claude Code history importer.
+    pub fn with_history_import(mut self, importer: crate::history_import::HistoryImporter) -> Self {
+        self.history_import = Some(importer);
+        self
+    }
+
     #[cfg(test)]
     pub(crate) fn with_github(mut self, github: GitHubCli) -> Self {
         self.github = github;
@@ -827,6 +835,12 @@ impl EngineRpc {
         self.local_import
             .as_ref()
             .ok_or_else(|| RpcError::Failed("local import requires a synced workspace".into()))
+    }
+
+    fn history_importer(&self) -> Result<&crate::history_import::HistoryImporter, RpcError> {
+        self.history_import
+            .as_ref()
+            .ok_or_else(|| RpcError::Failed("history import unavailable".into()))
     }
 
     fn local_project_action_space(&self, space_id: &str) -> Result<Space, RpcError> {
@@ -2545,6 +2559,55 @@ impl RpcService for EngineRpc {
                         }));
                     }
                     // tx drops here — the stream ends after the summary item.
+                });
+                Ok(RpcReply::Stream(Box::pin(futures::stream::poll_fn(
+                    move |cx| rx.poll_recv(cx),
+                ))))
+            }
+            methods::LIST_HISTORY_SOURCES => {
+                let importer = self.history_importer()?.clone();
+                let sources = tokio::task::spawn_blocking(move || importer.sources())
+                    .await
+                    .map_err(|e| RpcError::Failed(e.to_string()))?
+                    .map_err(|e| RpcError::Failed(e.to_string()))?;
+                RpcReply::value(&serde_json::json!({ "sources": sources }))
+            }
+            methods::LIST_HISTORY_SESSIONS => {
+                #[derive(Deserialize)]
+                struct P {
+                    source: String,
+                    #[serde(default)]
+                    limit: Option<usize>,
+                }
+                let p: P = parse_params(params)?;
+                let importer = self.history_importer()?.clone();
+                let list =
+                    tokio::task::spawn_blocking(move || importer.sessions(&p.source, p.limit))
+                        .await
+                        .map_err(|e| RpcError::Failed(e.to_string()))?
+                        .map_err(|e| RpcError::Failed(e.to_string()))?;
+                RpcReply::value(&list)
+            }
+            methods::IMPORT_HISTORY => {
+                let request: crate::history_import::HistoryImportRequest = parse_params(params)?;
+                let importer = self.history_importer()?.clone();
+                // Same bridge as the profile import: blocking fs work feeding
+                // an unbounded channel of tiny progress items.
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
+                tokio::task::spawn_blocking(move || {
+                    let emit = |event: crate::history_import::HistoryImportEvent| {
+                        if let Ok(item) = serde_json::to_value(&event) {
+                            let _ = tx.send(item);
+                        }
+                    };
+                    if let Err(err) = importer.run(&request, emit) {
+                        tracing::warn!(error = %err, "history import failed");
+                        let _ = tx.send(serde_json::json!({
+                            "kind": "summary",
+                            "imported": 0, "skipped": 0, "failed": 0,
+                            "errors": [format!("{err}")],
+                        }));
+                    }
                 });
                 Ok(RpcReply::Stream(Box::pin(futures::stream::poll_fn(
                     move |cx| rx.poll_recv(cx),

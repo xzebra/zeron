@@ -145,6 +145,13 @@ pub mod methods {
     pub const LOCAL_IMPORT_STATUS: &str = "LocalImportStatus";
     /// One-time local→synced profile import: run it (stream of progress items).
     pub const IMPORT_LOCAL_WORKSPACE: &str = "ImportLocalWorkspace";
+    /// Other agent CLIs' local history (Codex, Claude Code): each source
+    /// with its session counts (unary).
+    pub const LIST_HISTORY_SOURCES: &str = "ListHistorySources";
+    /// One source's sessions, newest first, with their import state (unary).
+    pub const LIST_HISTORY_SESSIONS: &str = "ListHistorySessions";
+    /// Import chosen sessions, or all not yet imported (stream of progress items).
+    pub const IMPORT_HISTORY: &str = "ImportHistory";
     // Repos / worktrees / folders (ControlRpc, relay-forwardable).
     pub const LIST_REPOS: &str = "ListRepos";
     pub const ADD_REPO: &str = "AddRepo";

@@ -48,6 +48,7 @@ pub(crate) mod catalog;
 mod normalize;
 pub mod realtime;
 mod subagents;
+pub mod transcript;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
