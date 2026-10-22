@@ -1090,6 +1090,26 @@ async fn rename_worktree_branch_guards_and_collisions() {
         "suffixed: {renamed2}"
     );
 
+    // Unmarked → not Zeron's to rename.
+    let wt3 = repos
+        .create_worktree(&repo_dir, "main")
+        .await
+        .expect("worktree 3");
+    git(
+        &repo_dir,
+        &[
+            "config",
+            "--unset",
+            &format!("branch.{}.zeronName", wt3.branch),
+        ],
+    )
+    .await;
+    let unmarked = repos
+        .rename_worktree_branch(Path::new(&wt3.path), &wt3.branch, "Unmarked")
+        .await
+        .expect("unmarked");
+    assert_eq!(unmarked, wt3.branch);
+
     // Slug edge cases.
     assert_eq!(
         worktree_branch_from_title("  Fix `Login` Flow!  "),

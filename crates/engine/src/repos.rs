@@ -1345,7 +1345,7 @@ impl Repos {
 
     /// `git worktree add` an isolated checkout under
     /// `{worktrees_root}/<repoName>/<generatedName>`, on a fresh `zeron/<name>`
-    /// branch off `branch`.
+    /// branch off `branch`, marked as Zeron's (see [`zeron_name_key`]).
     pub async fn create_worktree(
         &self,
         repo_path: &Path,
@@ -1417,6 +1417,11 @@ impl Repos {
                 &path.to_string_lossy(),
                 branch,
             ],
+            Some(repo_path),
+        )
+        .await?;
+        self.git(
+            &["config", &zeron_name_key(&branch_name), &branch_name],
             Some(repo_path),
         )
         .await?;
@@ -1525,6 +1530,16 @@ impl Repos {
         Ok(())
     }
 
+    /// The name Zeron gave `branch`, if it ever named it (`None` when unmarked).
+    async fn zeron_branch_name(
+        &self,
+        path: &Path,
+        branch: &str,
+    ) -> Result<Option<String>, EngineError> {
+        self.git_probe(&["config", "--get", &zeron_name_key(branch)], Some(path))
+            .await
+    }
+
     async fn branch_exists(&self, path: &Path, branch: &str) -> bool {
         self.git(
             &[
@@ -1542,7 +1557,8 @@ impl Repos {
     /// Rename a zeron-created worktree branch after its chat's generated title
     /// (port of zeron's `renameWorktreeBranch`). Guards:
     /// - respect an external checkout/rename: only act while the worktree is still
-    ///   on `expected_branch` AND that branch is the original `zeron/<folderName>`;
+    ///   on `expected_branch`, Zeron's marker still names it, AND it is the
+    ///   original `zeron/<folderName>`;
     /// - a title-slug collision gets a stable 6-hex suffix (hash of the worktree
     ///   path); a collision on THAT too fails.
     ///
@@ -1559,7 +1575,10 @@ impl Repos {
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
-        if current != expected_branch || expected_branch != format!("zeron/{folder}") {
+        if current != expected_branch
+            || expected_branch != format!("zeron/{folder}")
+            || self.zeron_branch_name(worktree_path, &current).await? != Some(current.clone())
+        {
             return Ok(current);
         }
         let preferred = worktree_branch_from_title(title);
@@ -1584,12 +1603,18 @@ impl Repos {
             Some(worktree_path),
         )
         .await?;
+        self.git(
+            &["config", &zeron_name_key(&target), &target],
+            Some(worktree_path),
+        )
+        .await?;
         self.current_branch(worktree_path).await
     }
 
     /// Best-effort worktree removal (if it still exists), then prune stale refs.
-    /// Deletes the worktree's branch ONLY when zeron created it (`zeron/…`) — the
-    /// user may have checked out their own branch inside the worktree.
+    /// Deletes the worktree's branch ONLY while Zeron's marker still names it
+    /// (unmarked branches from older versions: `zeron/…`) — the user may have
+    /// renamed it or checked out their own branch inside the worktree.
     pub async fn delete_worktree(
         &self,
         repo_path: &Path,
@@ -1618,7 +1643,13 @@ impl Repos {
             }
         }
         let _ = self.git(&["worktree", "prune"], Some(repo_path)).await;
-        if branch.starts_with("zeron/") {
+        let owned = !branch.is_empty()
+            && match self.zeron_branch_name(repo_path, &branch).await {
+                Ok(Some(name)) => name == branch,
+                Ok(None) => branch.starts_with("zeron/"),
+                Err(_) => false,
+            };
+        if owned {
             let _ = self.git(&["branch", "-D", &branch], Some(repo_path)).await;
         }
         Ok(())
@@ -2334,6 +2365,13 @@ fn is_git_metadata(relative: &str) -> bool {
 fn canonical_search_root(root: &Path) -> Result<PathBuf, EngineError> {
     std::fs::canonicalize(root)
         .map_err(|e| EngineError::Other(format!("could not search workspace: {e}")))
+}
+
+/// Git config key recording the name Zeron gave a worktree branch. `git branch
+/// -m` carries the `branch.<name>` section along and `-D` removes it, so the
+/// marker equals the branch's current name only while it is still Zeron's.
+fn zeron_name_key(branch: &str) -> String {
+    format!("branch.{branch}.zeronName")
 }
 
 /// Turn a generated chat title into the semantic portion of a Zeron branch

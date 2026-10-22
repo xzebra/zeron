@@ -238,6 +238,94 @@ async fn repos_round_trip_add_branches_worktrees() {
     );
 }
 
+/// Worktree deletion removes only branches Zeron still owns: the git config
+/// marker must name the current branch, whatever its prefix.
+#[tokio::test]
+async fn delete_worktree_removes_only_branches_zeron_owns() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_dir = tmp.path().join("myrepo");
+    init_repo(&repo_dir).await;
+    let repos = test_repos(&tmp.path().join("data"));
+    let delete = async |worktree: &zeron_proto::Worktree, branch: &str| {
+        repos
+            .delete_worktree(&repo_dir, Path::new(&worktree.path))
+            .await
+            .expect("delete worktree");
+        assert!(!PathBuf::from(&worktree.path).exists());
+        repos
+            .branches(&repo_dir)
+            .await
+            .expect("branches")
+            .contains(&branch.to_string())
+    };
+
+    // Renamed after the chat title: still Zeron's.
+    let titled = repos.create_worktree(&repo_dir, "main").await.unwrap();
+    let renamed = repos
+        .rename_worktree_branch(Path::new(&titled.path), &titled.branch, "Fix Login")
+        .await
+        .unwrap();
+    assert_eq!(renamed, "zeron/fix-login");
+    assert!(
+        !delete(&titled, &renamed).await,
+        "title-renamed branch deleted"
+    );
+
+    // Renamed by the user, even within zeron/: theirs now.
+    let user_renamed = repos.create_worktree(&repo_dir, "main").await.unwrap();
+    git(
+        Path::new(&user_renamed.path),
+        &["branch", "-m", &user_renamed.branch, "zeron/keep-me"],
+    )
+    .await;
+    assert!(
+        delete(&user_renamed, "zeron/keep-me").await,
+        "user-renamed branch kept"
+    );
+
+    // Marked branches outside zeron/ are Zeron's too.
+    let custom = repos.create_worktree(&repo_dir, "main").await.unwrap();
+    git(
+        Path::new(&custom.path),
+        &["branch", "-m", &custom.branch, "feat/custom"],
+    )
+    .await;
+    git(
+        &repo_dir,
+        &["config", "branch.feat/custom.zeronName", "feat/custom"],
+    )
+    .await;
+    assert!(
+        !delete(&custom, "feat/custom").await,
+        "marked branch deleted"
+    );
+
+    // Unmarked branches from older versions keep the zeron/ prefix rule.
+    let legacy = repos.create_worktree(&repo_dir, "main").await.unwrap();
+    git(
+        &repo_dir,
+        &[
+            "config",
+            "--unset",
+            &format!("branch.{}.zeronName", legacy.branch),
+        ],
+    )
+    .await;
+    assert!(
+        !delete(&legacy, &legacy.branch).await,
+        "legacy zeron/ branch deleted"
+    );
+
+    // The user's own branch checked out in the worktree is never deleted.
+    git(&repo_dir, &["branch", "feature/mine"]).await;
+    let checked_out = repos.create_worktree(&repo_dir, "main").await.unwrap();
+    git(Path::new(&checked_out.path), &["checkout", "feature/mine"]).await;
+    assert!(
+        delete(&checked_out, "feature/mine").await,
+        "user's branch kept"
+    );
+}
+
 #[tokio::test]
 async fn repository_identity_spans_worktrees_and_clones() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -267,18 +355,33 @@ async fn repository_identity_spans_worktrees_and_clones() {
     assert_eq!(repos.repository_identity(&linked).await.unwrap(), identity);
     git(
         &repo,
-        &["remote", "add", "origin", "git@github-alias:zeronsh/old-name.git"],
+        &[
+            "remote",
+            "add",
+            "origin",
+            "git@github-alias:zeronsh/old-name.git",
+        ],
     )
     .await;
     let clone = temp.path().join("clone");
     git(
         temp.path(),
-        &["clone", "-q", repo.to_str().unwrap(), clone.to_str().unwrap()],
+        &[
+            "clone",
+            "-q",
+            repo.to_str().unwrap(),
+            clone.to_str().unwrap(),
+        ],
     )
     .await;
     git(
         &clone,
-        &["remote", "set-url", "origin", "https://github.com/zeronsh/new-name"],
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://github.com/zeronsh/new-name",
+        ],
     )
     .await;
     assert_eq!(repos.repository_identity(&repo).await.unwrap(), identity);
@@ -352,7 +455,12 @@ async fn repository_identity_spans_worktrees_and_clones() {
     .await;
     git(
         &shallow,
-        &["remote", "set-url", "origin", "https://GitHub.com/ZeronSH/Zeron.git"],
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://GitHub.com/ZeronSH/Zeron.git",
+        ],
     )
     .await;
     assert_eq!(
@@ -369,7 +477,12 @@ async fn repository_identity_spans_worktrees_and_clones() {
     assert!(local.starts_with("local:"), "{local}");
     git(
         &empty,
-        &["remote", "add", "upstream", "git@github.com:Anara/Comet.git"],
+        &[
+            "remote",
+            "add",
+            "upstream",
+            "git@github.com:Anara/Comet.git",
+        ],
     )
     .await;
     assert_eq!(
