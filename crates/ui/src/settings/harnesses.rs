@@ -190,10 +190,16 @@ pub struct HarnessesPage {
     /// "Check now" is running: the button says so, since rows no longer
     /// show "Checking…" while a check is in flight.
     checking_updates: bool,
+    /// Import history from the CLIs on this device (shown for this device only).
+    history_import: Entity<super::history_import::HistoryImportCard>,
 }
 
 impl HarnessesPage {
     pub fn new(state: Entity<AppState>, cx: &mut Context<Self>) -> Self {
+        let history_import = {
+            let state = state.clone();
+            cx.new(|cx| super::history_import::HistoryImportCard::new(state, cx))
+        };
         let mut page = Self {
             state,
             scroll: widgets::PageScroll::default(),
@@ -214,6 +220,7 @@ impl HarnessesPage {
             update_task: None,
             update_action_task: None,
             checking_updates: false,
+            history_import,
         };
         page.load(cx);
         page
@@ -1275,7 +1282,10 @@ impl Render for HarnessesPage {
                                         ),
                                 )
                                 .children(update_error)
-                                .child(body),
+                                .child(body)
+                                .when(self.target_device.is_none(), |column| {
+                                    column.child(self.history_import.clone())
+                                }),
                         ),
                 )
                 .fade_overflow_y(&self.scroll.scroll),

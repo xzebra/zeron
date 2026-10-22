@@ -23,6 +23,7 @@ pub mod composer;
 pub mod devices;
 pub mod files;
 pub mod harnesses;
+pub mod history_import;
 pub mod notifications;
 pub mod shortcuts;
 pub mod thread_naming;

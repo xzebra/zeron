@@ -25,6 +25,7 @@ pub mod diff_sync;
 pub mod doc_host;
 mod fs_watch;
 pub mod harness_updates;
+pub mod history_import;
 pub(crate) mod home_index;
 mod http_error;
 pub mod instance_lock;
@@ -151,6 +152,8 @@ pub struct EngineCore {
     pub device_id: String,
     /// Local→synced profile import (account-scoped runtimes only).
     pub local_import: Option<local_import::LocalImporter>,
+    /// User-initiated import of Codex / Claude Code history into chats.
+    pub history_import: history_import::HistoryImporter,
     workspace_scope: WorkspaceScope,
     /// Auth service (attached by [`Engine::run`]; a lazy dev-mode instance otherwise).
     auth: std::sync::Mutex<Option<Auth>>,
@@ -308,6 +311,16 @@ impl EngineCore {
                 uploads.clone(),
             )
         });
+        let history_import = history_import::HistoryImporter::new(
+            history_import::HistoryImporter::default_sources(
+                &agent_accounts_config.codex_home,
+                &agent_accounts_config.claude_config_dir,
+            ),
+            &device_id,
+            workspace.clone(),
+            store_for_import.clone(),
+            profile.store_root(),
+        );
         // Logins started from another device publish their callback port to
         // the P2P service, which serves it to that device alone.
         let agent_accounts =
@@ -345,6 +358,7 @@ impl EngineCore {
             harness_updates,
             device_id,
             local_import,
+            history_import,
             workspace_scope: profile.scope(),
             auth: std::sync::Mutex::new(None),
             links: std::sync::Mutex::new(None),
@@ -477,7 +491,8 @@ impl EngineCore {
         )
         .with_auth(self.auth())
         .with_previews(self.previews.clone())
-        .with_harness_updates(self.harness_updates.clone());
+        .with_harness_updates(self.harness_updates.clone())
+        .with_history_import(self.history_import.clone());
         if let Some(links) = self.links() {
             rpc = rpc.with_links(links);
         }

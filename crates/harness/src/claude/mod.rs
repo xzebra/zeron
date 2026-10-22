@@ -46,6 +46,7 @@
 pub mod catalog;
 mod discovery;
 mod normalize;
+pub mod transcript;
 mod wire;
 
 use std::path::PathBuf;

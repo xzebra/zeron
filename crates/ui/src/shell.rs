@@ -74,6 +74,7 @@ mod command_palette;
 mod file_mutations;
 mod files_panel;
 mod harness_updates;
+mod history_import;
 mod navigation_focus;
 #[cfg(test)]
 mod navigation_tests;
@@ -97,6 +98,7 @@ mod tabs;
 mod voice_stage;
 use voice_stage::VOICE_STAGE_ORB_SCALE;
 
+pub use history_import::ImportHistory;
 use spaces::{AddSpaceFlow, EditProjectDialog};
 
 /// `connected` already includes the engine's degradation grace. A brief
@@ -2141,6 +2143,7 @@ pub struct Shell {
     /// The New project palette's collapsed-breadcrumbs (`…`) menu.
     project_crumb_menu: popover::Popup<()>,
     command_palette: Option<command_palette::CommandPalette>,
+    history_import: Option<history_import::HistoryImportFlow>,
     /// The focus whose workspace search index was last warmed (see `search_warm`).
     search_warm: Option<search_warm::SearchWarm>,
     /// Per chat, the files opened in editor tabs, most recent first.
@@ -2653,6 +2656,7 @@ impl Shell {
             add_space: None,
             project_crumb_menu: popover::Popup::default(),
             command_palette: None,
+            history_import: None,
             search_warm: None,
             recent_files: std::collections::HashMap::new(),
             pending_workspace_command: None,
@@ -10624,6 +10628,11 @@ impl Shell {
             update.update(cx, |update, cx| update.dismiss_prompt(cx));
             return true;
         }
+        if self.history_import.is_some() {
+            self.history_import = None;
+            cx.notify();
+            return true;
+        }
         // The folded-breadcrumbs menu floats over the palette; it closes first.
         if self.add_space.is_some() && self.project_crumb_menu.is_open() {
             self.close_project_crumb_menu(cx);
@@ -10923,6 +10932,9 @@ impl Shell {
             overlays.push(overlay);
         }
         if let Some(overlay) = self.render_add_space_overlay(viewport, window, cx) {
+            overlays.push(overlay);
+        }
+        if let Some(overlay) = self.render_history_import_overlay(viewport, window, cx) {
             overlays.push(overlay);
         }
         if let Some(overlay) = self.render_project_action_overlay(viewport, window, cx) {
@@ -13784,6 +13796,9 @@ impl Render for Shell {
             // Native Settings menu item and the platform convention (Cmd+, on
             // macOS, Ctrl+, elsewhere) toggle the modal from any section.
             .on_action(cx.listener(|this, _: &OpenSettings, _, cx| this.toggle_settings(cx)))
+            .on_action(cx.listener(|this, action: &ImportHistory, window, cx| {
+                this.open_history_import(action, window, cx)
+            }))
             .on_action(cx.listener(|this, _: &NextSession, window, cx| {
                 this.cycle_navigation(true, window, cx)
             }))
