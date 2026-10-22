@@ -26,16 +26,13 @@ use crate::connectivity::{PRESENCE_FRESH_MS, SendState};
 
 /// Size of the project color palette [`ProjectRef::color_index`] indexes —
 /// the desktop's monogram palette (`ui/src/shell/project_icon.rs`).
-pub const PROJECT_COLOR_COUNT: u32 = 8;
+pub const PROJECT_COLOR_COUNT: u32 = zeron_proto::project_icon::COLOR_COUNT;
 
 /// Stable palette slot for a project, exactly as the desktop picks its
 /// monogram tone: 32-bit FNV-1a of the project's path (`"home"` without a
 /// project), so a project has the same color on every device.
 pub fn project_color_index(space_path: &str) -> u32 {
-    let hash = space_path.bytes().fold(2_166_136_261u32, |h, b| {
-        (h ^ u32::from(b)).wrapping_mul(16_777_619)
-    });
-    hash % PROJECT_COLOR_COUNT
+    zeron_proto::project_icon::path_color_index(space_path)
 }
 
 /// Compact age label for list rows: `now`, `34m`, `4h`, `2d` (legacy
@@ -122,6 +119,9 @@ pub struct FrontPage {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProjectView {
     pub id: String,
+    /// The project's chosen artwork path and color; absent means automatic.
+    pub icon_path: Option<String>,
+    pub custom_color_index: Option<u32>,
     pub name: String,
     pub path: String,
     pub color_index: u32,
@@ -445,7 +445,10 @@ fn build_row(chat: &Chat, rc: &RowContext<'_>, cx: &DeriveContext<'_>) -> Arc<Se
             id: space.id.clone(),
             name: space.display_name().to_owned(),
             // Clones of one repository share their representative's color.
-            color_index: project_color_index(&representative_space(rc.all_spaces, space).path),
+            color_index: zeron_proto::project_icon::color_index(representative_space(
+                rc.all_spaces,
+                space,
+            )),
         });
     let device = rc.devices.get(chat.device_id.as_str());
     let config = chat.config.as_ref();
@@ -623,10 +626,12 @@ pub(crate) fn derive(
                 .unwrap_or(ChatIndicator::Idle);
             let representative = representative_space(&state.spaces, space);
             ProjectView {
+                icon_path: representative.icon_path.clone(),
+                custom_color_index: representative.color_index,
                 id: space.id.clone(),
                 name: space.display_name().to_owned(),
                 path: space.path.clone(),
-                color_index: project_color_index(&representative.path),
+                color_index: zeron_proto::project_icon::color_index(representative),
                 device_id: space.device_id.clone(),
                 device_name: rc
                     .devices

@@ -279,9 +279,23 @@ impl Repos {
 
     /// Run `git <args>` (optionally under `cwd`), returning trimmed stdout.
     async fn git(&self, args: &[&str], cwd: Option<&Path>) -> Result<String, EngineError> {
+        self.git_with_path(args, cwd, None).await
+    }
+
+    async fn git_with_path(
+        &self,
+        args: &[&str],
+        cwd: Option<&Path>,
+        path: Option<&std::ffi::OsStr>,
+    ) -> Result<String, EngineError> {
         let mut cmd = tokio::process::Command::new("git");
         // Git hooks may need the user's shell tools.
         zeron_harness::compose_login_shell_path(&mut cmd);
+        if let Some(path) = path {
+            // Use the project's ordering: appending it after /usr/bin would
+            // still select macOS's old Ruby before the project's Ruby.
+            cmd.env("PATH", path);
+        }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -1416,18 +1430,29 @@ impl Repos {
         self.add_worktree_in_two_steps(repo_path, &path, &branch_name, branch)
             .await?;
         #[cfg(not(windows))]
-        self.git(
-            &[
-                "worktree",
-                "add",
-                "-b",
-                &branch_name,
-                &path.to_string_lossy(),
-                branch,
-            ],
-            Some(repo_path),
-        )
-        .await?;
+        {
+            // Checkout hooks run project tooling. A cached startup PATH cannot
+            // reflect mise/asdf/etc. selecting a runtime for this repository.
+            let project_dir = repo_path.to_path_buf();
+            let project_path = tokio::task::spawn_blocking(move || {
+                zeron_harness::shell_env::login_shell_path_in(&project_dir)
+            })
+            .await
+            .unwrap_or(None);
+            self.git_with_path(
+                &[
+                    "worktree",
+                    "add",
+                    "-b",
+                    &branch_name,
+                    &path.to_string_lossy(),
+                    branch,
+                ],
+                Some(repo_path),
+                project_path.as_deref(),
+            )
+            .await?;
+        }
         self.git(
             &["config", &zeron_name_key(&branch_name), &branch_name],
             Some(repo_path),
@@ -2624,6 +2649,132 @@ mod tests {
     }
 
     use super::*;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn worktree_hooks_can_use_login_shell_tools() {
+        use std::os::unix::fs::PermissionsExt;
+
+        const CHILD: &str = "ZERON_WORKTREE_HOOK_FIXTURE";
+        if std::env::var_os(CHILD).is_none() {
+            let root = tempfile::tempdir().unwrap();
+            let bin = root.path().join("shell-bin");
+            std::fs::create_dir(&bin).unwrap();
+            let desktop_bin = root.path().join("desktop-bin");
+            let project_bin = root.path().join("project-bin");
+            for (dir, script) in [
+                (
+                    &desktop_bin,
+                    "#!/bin/sh\necho 'wrong runtime from desktop PATH' >&2\nexit 1\n",
+                ),
+                (&project_bin, "#!/bin/sh\nprintf 'hook completed'\n"),
+            ] {
+                std::fs::create_dir(dir).unwrap();
+                let runtime = dir.join("zeron-hook-runtime");
+                std::fs::write(&runtime, script).unwrap();
+                std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            let tool = bin.join("zeron-hook-tool");
+            std::fs::write(&tool, "#!/bin/sh\nexec zeron-hook-runtime\n").unwrap();
+            std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+            // A deterministic login shell reports only fabricated tool paths;
+            // no user shell configuration or credentials enter this fixture.
+            let shell = root.path().join("fixture-shell");
+            std::fs::write(
+                &shell,
+                "#!/bin/sh\nproject_path=\nif [ \"$PWD\" = \"$ZERON_HOOK_PROJECT_ROOT\" ]; then project_path=\"$ZERON_HOOK_PROJECT_BIN:\"; fi\nprintf '__ZERON_SHELL_ENV_BEGIN__\\nPATH=%s%s:/usr/bin:/bin\\n__ZERON_SHELL_ENV_END__\\n' \"$project_path\" \"$ZERON_HOOK_TOOL_DIR\"\n",
+            )
+            .unwrap();
+            std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+            // Isolate the PATH cache and environment from parallel tests.
+            let output = tokio::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "repos::tests::worktree_hooks_can_use_login_shell_tools",
+                ])
+                .env(CHILD, root.path())
+                .env("ZERON_HOOK_TOOL_DIR", &bin)
+                .env(
+                    "ZERON_HOOK_PROJECT_ROOT",
+                    root.path().canonicalize().unwrap().join("repo"),
+                )
+                .env("ZERON_HOOK_PROJECT_BIN", &project_bin)
+                .env("SHELL", &shell)
+                .env(
+                    "PATH",
+                    std::env::join_paths([
+                        desktop_bin.as_path(),
+                        Path::new("/usr/bin"),
+                        Path::new("/bin"),
+                    ])
+                    .unwrap(),
+                )
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env_remove("ZERON_NO_LOGIN_SHELL")
+                .output()
+                .await
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            return;
+        }
+
+        let root = PathBuf::from(std::env::var_os(CHILD).unwrap());
+        assert_eq!(
+            tokio::process::Command::new("zeron-hook-tool")
+                .output()
+                .await
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::NotFound,
+            "the hook tool must be absent from the desktop process PATH"
+        );
+        let repo = root.join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        let repos =
+            Repos::with_worktrees_root(&root.join("data"), "fixture", root.join("worktrees"));
+        repos.git(&["init"], Some(&repo)).await.unwrap();
+        repos
+            .git(
+                &[
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.com",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "--allow-empty",
+                    "-m",
+                    "fixture",
+                ],
+                Some(&repo),
+            )
+            .await
+            .unwrap();
+        let hook = repo.join(".git/hooks/post-checkout");
+        std::fs::write(&hook, "#!/bin/sh\nzeron-hook-tool > hook-ran\n").unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let worktree = repos.create_worktree(&repo, "HEAD").await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(Path::new(&worktree.path).join("hook-ran")).unwrap(),
+            "hook completed"
+        );
+        assert_eq!(
+            tokio::process::Command::new("zeron-hook-tool")
+                .output()
+                .await
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::NotFound,
+            "Git's child PATH must not change the desktop process PATH"
+        );
+    }
 
     #[test]
     fn windows_worktree_limit_counts_utf16_without_verbatim_prefix() {

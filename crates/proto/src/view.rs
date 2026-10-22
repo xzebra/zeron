@@ -219,6 +219,8 @@ mod project_tests {
             device_id: device.into(),
             path: format!("/{device}/{id}"),
             name: None,
+            icon_path: None,
+            color_index: None,
             git_detected: repository.is_some(),
             git_checked_at: None,
             checkout_id: None,

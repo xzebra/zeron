@@ -41,6 +41,22 @@ pub fn login_shell_path() -> Option<&'static OsStr> {
     }
 }
 
+/// Resolve tools as a shell opened in this project would. Unlike the global
+/// snapshot, this observes directory-specific version managers and is not
+/// cached: the project may change its tool versions between checkouts.
+/// This is a bounded blocking probe; async callers should use spawn_blocking.
+pub fn login_shell_path_in(directory: &std::path::Path) -> Option<OsString> {
+    #[cfg(unix)]
+    {
+        unix::capture_in(Some(directory))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = directory;
+        None
+    }
+}
+
 /// Kick off the snapshot on a background thread so the first harness resolve
 /// doesn't pay the shell-startup latency inline. Call at daemon startup.
 pub fn prewarm() {
@@ -73,11 +89,15 @@ mod unix {
     const EXIT_FLUSH_GRACE: Duration = Duration::from_millis(250);
 
     pub(super) fn capture() -> Option<OsString> {
+        capture_in(None)
+    }
+
+    pub(super) fn capture_in(directory: Option<&Path>) -> Option<OsString> {
         if std::env::var_os("ZERON_NO_LOGIN_SHELL").is_some_and(|v| !v.is_empty()) {
             return None;
         }
         let shell = user_shell()?;
-        snapshot_path(&shell, ATTEMPT_TIMEOUT)
+        snapshot_path_in(&shell, ATTEMPT_TIMEOUT, directory)
     }
 
     /// The user's shell: `$SHELL`, then the passwd entry, then well-known
@@ -137,10 +157,19 @@ mod unix {
 
     /// Run `<shell> <flags> 'echo BEGIN; env; echo END'` per flag set until one
     /// yields a parseable PATH.
-    pub(super) fn snapshot_path(shell: &Path, timeout: Duration) -> Option<OsString> {
+    #[cfg(test)]
+    fn snapshot_path(shell: &Path, timeout: Duration) -> Option<OsString> {
+        snapshot_path_in(shell, timeout, None)
+    }
+
+    fn snapshot_path_in(
+        shell: &Path,
+        timeout: Duration,
+        directory: Option<&Path>,
+    ) -> Option<OsString> {
         let script = format!("echo {BEGIN_MARKER}; env; echo {END_MARKER}");
         for flags in attempt_flag_sets(shell) {
-            let output = run_and_capture(shell, &flags, &script, timeout);
+            let output = run_and_capture(shell, &flags, &script, timeout, directory);
             if let Some(path) = parse_snapshot_path(&output) {
                 return Some(path);
             }
@@ -153,8 +182,17 @@ mod unix {
     /// lives on its own thread appending into a shared buffer, so a shell that
     /// blocks after printing — or a grandchild that inherits the pipe and
     /// never closes it — can't hang us on EOF.
-    fn run_and_capture(shell: &Path, flags: &[&str], script: &str, timeout: Duration) -> Vec<u8> {
+    fn run_and_capture(
+        shell: &Path,
+        flags: &[&str],
+        script: &str,
+        timeout: Duration,
+        directory: Option<&Path>,
+    ) -> Vec<u8> {
         let mut cmd = std::process::Command::new(shell);
+        if let Some(directory) = directory {
+            cmd.current_dir(directory);
+        }
         cmd.args(flags)
             .arg(script)
             .stdin(Stdio::null())

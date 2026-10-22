@@ -2641,12 +2641,21 @@ fn path_under(path: &str, base: &str) -> bool {
             .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '\\']))
 }
 
-/// The space-row Rename dialog (same shape as [`RenameChatDialog`]).
-pub(super) struct RenameSpaceDialog {
+/// Project name and artwork editor.
+pub(super) struct EditProjectDialog {
     pub space_id: String,
     pub input: Entity<ComposerInput>,
+    pub icon_input: Entity<ComposerInput>,
+    /// Chosen monogram color; `None` keeps the path-derived one.
+    pub color: Option<u32>,
+    pub derived_color: u32,
+    /// The name shown on open; leaving it untouched keeps the stored name.
+    pub original_name: String,
+    /// This device's checkout of the project, for choosing artwork from disk.
+    pub local_root: Option<std::path::PathBuf>,
+    pub error: Option<String>,
     pub focus_pending: bool,
-    pub _events: Subscription,
+    pub _events: Vec<Subscription>,
 }
 
 /// Dot color for a chat's display status (tab dots + Sessions rows).
@@ -5610,7 +5619,7 @@ impl Shell {
                         .and_then(|space| state.project_members(space).first().map(|m| m.id.clone()))
                 })
                 .flatten();
-            let new_chat_button = group_space.map(|project| {
+            let new_chat_button = group_space.clone().map(|project| {
                 div()
                     .id(SharedString::from(format!(
                         "sidebar-group-new-chat-{collapse_key}"
@@ -5652,6 +5661,16 @@ impl Shell {
                 )
                     .group(group_name)
                 .id(SharedString::from(format!("sidebar-group-{collapse_key}")))
+                .when_some(group_space, |el, space_id| {
+                    el.on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.space_menu.open((space_id.clone(), event.position));
+                            cx.notify();
+                        }),
+                    )
+                })
                 .on_click(cx.listener(move |this, _, _, cx| {
                     let was_open = !this.sidebar_collapsed_groups.contains(&toggle_key);
                     this.begin_sidebar_disclosure_motion(
@@ -6693,6 +6712,8 @@ impl Shell {
             device_id: device.id.clone(),
             path: path.clone(),
             name: None,
+            icon_path: None,
+            color_index: None,
             git_detected,
             git_checked_at: None,
             checkout_id: None,
@@ -7483,7 +7504,7 @@ impl Shell {
         Some(command_palette::palette_overlay(viewport, card))
     }
 
-    // ---- space context menu / rename / delete overlays ----
+    // ---- space context menu / edit / delete overlays ----
 
     fn close_space_menu(&mut self, cx: &mut Context<Self>) {
         if self.space_menu.begin_close() {
@@ -7492,41 +7513,146 @@ impl Shell {
         }
     }
 
-    pub(super) fn open_rename_space(&mut self, space_id: String, cx: &mut Context<Self>) {
+    pub(super) fn open_edit_project(&mut self, space_id: String, cx: &mut Context<Self>) {
         self.close_space_menu(cx);
-        let current = self
-            .state
-            .read(cx)
-            .space_row(&space_id)
-            .map(|s| s.display_name().to_string())
-            .unwrap_or_default();
+        let state = self.state.read(cx);
+        let Some(space) = state.space_row(&space_id) else {
+            return;
+        };
+        // The project's name and artwork live on its representative.
+        let representative = state.representative_space(space);
+        let current = representative.display_name().to_string();
+        let original_name = current.clone();
+        let current_icon = representative.icon_path.clone().unwrap_or_default();
+        let color = representative.color_index;
+        let derived_color = zeron_proto::project_icon::path_color_index(&representative.path);
+        let local_root = state
+            .project_members(space)
+            .into_iter()
+            .find(|member| state.local_device_id.as_deref() == Some(&member.device_id))
+            .and_then(|member| {
+                super::project_icon::checkout_root(std::path::Path::new(&member.path))
+            });
+        let icon_input = cx.new(|cx| ComposerInput::new("Automatic", cx));
+        icon_input.update(cx, |input, cx| input.set_text(current_icon, cx));
         let input = cx.new(|cx| ComposerInput::new("Project name", cx));
         input.update(cx, |input, cx| input.set_text(current, cx));
         let events = cx.subscribe(&input, |this: &mut Shell, _, event, cx| {
             if matches!(event, ComposerInputEvent::Submitted) {
-                this.submit_rename_space(cx);
+                this.submit_edit_project(cx);
             }
         });
-        self.rename_space_dialog = Some(RenameSpaceDialog {
+        let icon_events = cx.subscribe(&icon_input, |this: &mut Shell, _, event, cx| {
+            if matches!(event, ComposerInputEvent::Submitted) {
+                this.submit_edit_project(cx);
+            }
+        });
+        self.edit_project_dialog = Some(EditProjectDialog {
             space_id,
             input,
+            icon_input,
+            color,
+            derived_color,
+            original_name,
+            local_root,
+            error: None,
             focus_pending: true,
-            _events: events,
+            _events: vec![events, icon_events],
         });
         cx.notify();
     }
 
-    pub(super) fn submit_rename_space(&mut self, cx: &mut Context<Self>) {
-        let Some(dialog) = self.rename_space_dialog.take() else {
+    /// Pick artwork from this device's checkout; stored relative to its root
+    /// so every checkout of the project resolves the same file.
+    fn choose_project_icon(&mut self, cx: &mut Context<Self>) {
+        let Some(root) = self
+            .edit_project_dialog
+            .as_ref()
+            .and_then(|dialog| dialog.local_root.clone())
+        else {
             return;
         };
+        let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Choose Icon".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(mut paths))) = receiver.await else {
+                return;
+            };
+            let Some(path) = paths.pop() else {
+                return;
+            };
+            let relative = path
+                .canonicalize()
+                .ok()
+                .and_then(|path| {
+                    path.strip_prefix(&root).ok().map(|relative| {
+                        relative
+                            .components()
+                            .map(|part| part.as_os_str().to_string_lossy())
+                            .collect::<Vec<_>>()
+                            .join("/")
+                    })
+                })
+                .ok_or("Choose an image inside the project")
+                .and_then(|relative| {
+                    zeron_proto::project_icon::normalize_path(Some(&relative))?
+                        .ok_or("Choose an image inside the project")
+                });
+            let _ = this.update(cx, |this, cx| {
+                let Some(dialog) = this.edit_project_dialog.as_mut() else {
+                    return;
+                };
+                match relative {
+                    Ok(relative) => {
+                        dialog.error = None;
+                        dialog
+                            .icon_input
+                            .update(cx, |input, cx| input.set_text(relative, cx));
+                    }
+                    Err(message) => dialog.error = Some(message.into()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn submit_edit_project(&mut self, cx: &mut Context<Self>) {
+        let Some(dialog) = self.edit_project_dialog.as_mut() else {
+            return;
+        };
+        let icon_path = match zeron_proto::project_icon::normalize_path(Some(
+            dialog.icon_input.read(cx).text(),
+        )) {
+            Ok(path) => path,
+            Err(message) => {
+                dialog.error = Some(message.into());
+                cx.notify();
+                return;
+            }
+        };
+        let Some(dialog) = self.edit_project_dialog.take() else {
+            return;
+        };
+        // Untouched: keep the stored name; blank: restore the folder name.
         let name = dialog.input.read(cx).text().trim().to_string();
-        if !name.is_empty() {
-            self.mutate(
-                serde_json::json!({ "op": "renameSpace", "spaceId": dialog.space_id, "name": name }),
-                cx,
-            );
-        }
+        let name = (name != dialog.original_name).then_some(name);
+        self.mutate(
+            serde_json::json!({
+                "op": "editProject",
+                "spaceId": dialog.space_id,
+                "name": name,
+                "iconPath": icon_path,
+                "colorIndex": dialog.color,
+            }),
+            cx,
+        );
+        // Reload artwork now, even when only the file behind the path changed.
+        self.project_icons.clear();
         cx.notify();
     }
 
@@ -7539,7 +7665,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// Space context menu + rename dialog + delete confirm (appended to the
+    /// Space context menu + edit dialog + delete confirm (appended to the
     /// shell's overlay list).
     pub(super) fn render_space_overlays(
         &mut self,
@@ -7562,13 +7688,13 @@ impl Shell {
                 .flex()
                 .flex_col()
                 .child(
-                    popover::menu_row(&theme, false, format!("space-menu-rename-{space_id}"))
-                        .id("space-menu-rename")
+                    popover::menu_row(&theme, false, format!("space-menu-edit-{space_id}"))
+                        .id("space-menu-edit")
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.open_rename_space(rename_id.clone(), cx)
+                            this.open_edit_project(rename_id.clone(), cx)
                         }))
                         .child(icon(icons::PEN).size(px(16.0)).text_color(theme.text_muted))
-                        .child(SharedString::from("Rename…")),
+                        .child(SharedString::from("Edit Project…")),
                 )
                 .child(popover::menu_separator())
                 .child(
@@ -7596,25 +7722,98 @@ impl Shell {
             ));
         }
 
-        if let Some(dialog) = &mut self.rename_space_dialog {
+        if let Some(dialog) = &mut self.edit_project_dialog {
             if std::mem::take(&mut dialog.focus_pending) {
                 window.focus(&dialog.input.focus_handle(cx), cx);
             }
             let input = dialog.input.clone();
+            let icon_input = dialog.icon_input.clone();
+            let error = dialog.error.clone();
+            let can_choose = dialog.local_root.is_some();
+            let selected_color = dialog.color.unwrap_or(dialog.derived_color);
             let card = popover::dialog_card(&theme)
                 .on_key_down(cx.listener(|this, ev: &gpui::KeyDownEvent, _, cx| {
                     if ev.keystroke.key == "escape" {
-                        this.rename_space_dialog = None;
+                        this.edit_project_dialog = None;
                         cx.notify();
                         cx.stop_propagation();
                     }
                 }))
-                .child(popover::dialog_title(&theme, "Rename project"))
+                .child(popover::dialog_title(&theme, "Edit Project"))
                 .child(
                     div()
                         .mt(px(12.0))
                         .child(popover::dialog_field(input.into_any_element())),
                 )
+                .child(div().mt(px(12.0)).text_size(px(12.0)).child("Icon path"))
+                .child(
+                    div()
+                        .mt(px(6.0))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(popover::dialog_field(icon_input.into_any_element())),
+                        )
+                        .when(can_choose, |el| {
+                            el.child(
+                                popover::btn_ghost(&theme, "Choose…", "edit-project-choose-icon")
+                                    .id("edit-project-choose-icon")
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.choose_project_icon(cx)),
+                                    ),
+                            )
+                        }),
+                )
+                .child(
+                    div()
+                        .mt(px(6.0))
+                        .text_size(px(11.0))
+                        .text_color(theme.text_muted)
+                        .child("Relative to the repository root, e.g. apps/web/public/icon.png. Leave blank for automatic."),
+                )
+                .child(div().mt(px(12.0)).text_size(px(12.0)).child("Color"))
+                .child(
+                    div()
+                        .mt(px(6.0))
+                        .flex()
+                        .flex_row()
+                        .gap(px(6.0))
+                        .children((0..zeron_proto::project_icon::COLOR_COUNT).map(|color| {
+                            let tone = super::project_icon::monogram_tone(color, &theme);
+                            div()
+                                .id(("edit-project-color", color as usize))
+                                .size(px(20.0))
+                                .rounded(px(5.0))
+                                .border_2()
+                                .border_color(if color == selected_color {
+                                    theme.text
+                                } else {
+                                    gpui::transparent_black()
+                                })
+                                .bg(tone)
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if let Some(dialog) = this.edit_project_dialog.as_mut() {
+                                        dialog.color = Some(color);
+                                        cx.notify();
+                                    }
+                                }))
+                        })),
+                )
+                .when_some(error, |el, error| {
+                    el.child(
+                        div()
+                            .mt(px(8.0))
+                            .text_size(px(12.0))
+                            .text_color(theme.danger)
+                            .child(error),
+                    )
+                })
                 .child(
                     div()
                         .mt(px(16.0))
@@ -7623,23 +7822,38 @@ impl Shell {
                         .justify_end()
                         .gap(px(8.0))
                         .child(
-                            popover::btn_ghost(&theme, "Cancel", "rename-space-cancel")
-                                .id("rename-space-cancel")
+                            popover::btn_ghost(&theme, "Reset Icon", "edit-project-reset")
+                                .id("edit-project-reset")
+                                .mr_auto()
                                 .on_click(cx.listener(|this, _, _, cx| {
-                                    this.rename_space_dialog = None;
+                                    if let Some(dialog) = this.edit_project_dialog.as_mut() {
+                                        dialog.color = None;
+                                        dialog.error = None;
+                                        dialog
+                                            .icon_input
+                                            .update(cx, |input, cx| input.set_text(String::new(), cx));
+                                        cx.notify();
+                                    }
+                                })),
+                        )
+                        .child(
+                            popover::btn_ghost(&theme, "Cancel", "edit-project-cancel")
+                                .id("edit-project-cancel")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.edit_project_dialog = None;
                                     cx.notify();
                                 })),
                         )
                         .child(
-                            popover::btn_primary(&theme, "Rename")
-                                .id("rename-space-save")
+                            popover::btn_primary(&theme, "Save")
+                                .id("edit-project-save")
                                 .on_click(
-                                    cx.listener(|this, _, _, cx| this.submit_rename_space(cx)),
+                                    cx.listener(|this, _, _, cx| this.submit_edit_project(cx)),
                                 ),
                         ),
                 )
                 .into_any_element();
-            overlays.push(popover::modal("rename-space-dialog", viewport, card));
+            overlays.push(popover::modal("edit-project-dialog", viewport, card));
         }
 
         if let Some(space_id) = self.delete_space_confirm.clone() {

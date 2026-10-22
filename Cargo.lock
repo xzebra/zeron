@@ -13596,6 +13596,7 @@ name = "zeron-client"
 version = "0.2.114"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "futures",
  "loro",
@@ -13736,6 +13737,8 @@ name = "zeron-mobile"
 version = "0.2.114"
 dependencies = [
  "async-trait",
+ "image",
+ "resvg",
  "serde",
  "serde_json",
  "similar",

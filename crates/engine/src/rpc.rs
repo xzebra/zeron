@@ -622,6 +622,14 @@ enum MutateParams {
         #[serde(default)]
         name: Option<String>,
     },
+    #[serde(rename_all = "camelCase")]
+    EditProject {
+        space_id: String,
+        name: Option<String>,
+        icon_path: Option<String>,
+        #[serde(default)]
+        color_index: Option<u32>,
+    },
     /// Hard delete: cascades to every chat (and session row) in the space.
     /// Live runs hosted here are interrupted best-effort.
     #[serde(rename_all = "camelCase")]
@@ -1251,6 +1259,27 @@ impl EngineRpc {
                 .workspace
                 .create_space(&space_id, &device_id, &path, name, git_detected)
                 .map_err(failed),
+            MutateParams::EditProject {
+                space_id,
+                name,
+                icon_path,
+                color_index,
+            } => self
+                .workspace
+                .edit_project(
+                    &space_id,
+                    name.as_deref(),
+                    icon_path.as_deref(),
+                    color_index,
+                )
+                .map_err(failed)
+                .and_then(|found| {
+                    if found {
+                        Ok(())
+                    } else {
+                        Err(RpcError::Failed("Project no longer exists".into()))
+                    }
+                }),
             MutateParams::RenameSpace { space_id, name } => self
                 .workspace
                 .rename_space(&space_id, name.as_deref())

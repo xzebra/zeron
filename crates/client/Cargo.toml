@@ -12,6 +12,7 @@ publish.workspace = true
 # frontend (iOS, Android, tests, CLIs).
 
 [dependencies]
+base64 = "0.22"
 zeron-voice-session.workspace = true
 zeron-proto.workspace = true
 zeron-doc.workspace = true

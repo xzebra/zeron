@@ -1111,6 +1111,8 @@ impl RegistryDoc {
             ("deviceId", json!(space.device_id)),
             ("path", json!(space.path)),
             ("name", opt_str(space.name.as_deref())),
+            ("iconPath", opt_str(space.icon_path.as_deref())),
+            ("colorIndex", json!(space.color_index)),
             ("gitDetected", json!(space.git_detected)),
             ("gitCheckedAt", opt_ms(space.git_checked_at)),
             ("checkoutId", opt_str(space.checkout_id.as_deref())),
@@ -1138,8 +1140,43 @@ impl RegistryDoc {
         Ok(spaces)
     }
 
-    /// LWW display-name set from any device; `None` clears back to the derived
-    /// name (basename of path). `false` when no such row.
+    /// Edit every checkout of the repository together in one registry batch.
+    /// `name: None` leaves names alone; a blank name restores the basename.
+    pub fn edit_project(
+        &mut self,
+        space_id: &str,
+        name: Option<&str>,
+        icon_path: Option<&str>,
+        color_index: Option<u32>,
+    ) -> Result<bool, DocError> {
+        let icon_path = zeron_proto::project_icon::normalize_path(icon_path)
+            .map_err(|message| DocError::Schema(message.into()))?;
+        if color_index.is_some_and(|index| index >= zeron_proto::project_icon::COLOR_COUNT) {
+            return Err(DocError::Schema("Unknown project color".into()));
+        }
+        let Some(space) = self.space(space_id)? else {
+            return Ok(false);
+        };
+        let key = zeron_proto::view::project_key(&space);
+        let name = name.map(|name| opt_str(Some(name.trim()).filter(|name| !name.is_empty())));
+        for member in self
+            .read_spaces()?
+            .into_iter()
+            .filter(|s| zeron_proto::view::project_key(s) == key)
+        {
+            let mut set = fields([
+                ("iconPath", opt_str(icon_path.as_deref())),
+                ("colorIndex", json!(color_index)),
+            ]);
+            if let Some(name) = &name {
+                set.insert("name".into(), name.clone());
+            }
+            self.write(KIND_SPACES, &member.id, OpKind::Update, set);
+        }
+        Ok(true)
+    }
+
+    /// LWW display-name set; `None` restores the basename.
     pub fn rename_space(&mut self, space_id: &str, name: Option<&str>) -> Result<bool, DocError> {
         if !self.row_exists(KIND_SPACES, space_id) {
             return Ok(false);
@@ -1621,6 +1658,8 @@ impl RegistryDoc {
                     ("deviceId", json!(space.device_id)),
                     ("path", json!(space.path)),
                     ("name", opt_str(space.name.as_deref())),
+                    ("iconPath", opt_str(space.icon_path.as_deref())),
+                    ("colorIndex", json!(space.color_index)),
                     ("gitDetected", json!(space.git_detected)),
                     ("gitCheckedAt", opt_ms(space.git_checked_at)),
                     ("checkoutId", opt_str(space.checkout_id.as_deref())),

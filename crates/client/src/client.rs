@@ -519,7 +519,7 @@ impl ClientInner {
 /// One signed-in account (or Demo mode). Cheap to clone.
 #[derive(Clone)]
 pub struct Client {
-    inner: Arc<ClientInner>,
+    pub(crate) inner: Arc<ClientInner>,
 }
 
 impl std::fmt::Debug for Client {
@@ -986,6 +986,8 @@ impl Client {
             device_id: device_id.to_owned(),
             path: path.to_owned(),
             name: None,
+            icon_path: None,
+            color_index: None,
             git_detected,
             git_checked_at: None,
             checkout_id: None,
@@ -1038,6 +1040,25 @@ impl Client {
         }
         self.inner.registry_write(|doc| doc.upsert_space(&space))?;
         Ok(id)
+    }
+
+    /// Name, artwork and color for every checkout of the project. `name: None`
+    /// keeps the current name; no artwork path or color means automatic.
+    pub fn edit_project(
+        &self,
+        space_id: &str,
+        name: Option<&str>,
+        icon_path: Option<&str>,
+        color_index: Option<u32>,
+    ) -> Result<()> {
+        if self
+            .inner
+            .registry_write(|doc| doc.edit_project(space_id, name, icon_path, color_index))?
+        {
+            Ok(())
+        } else {
+            Err(ClientError::NotFound(space_id.to_owned()))
+        }
     }
 
     pub fn rename_project(&self, space_id: &str, name: Option<&str>) -> Result<()> {

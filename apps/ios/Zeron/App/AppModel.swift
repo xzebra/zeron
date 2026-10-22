@@ -46,6 +46,58 @@ final class AppModel {
     private(set) var live = LiveCounts()
     private var rows: [String: SessionRow] = [:]
     private var rawProjects: [ProjectView] = []
+    private var projectArtwork: [String: Data] = [:]
+    private var projectIconAttempts: [String: Date] = [:]
+    private var projectIconTask: Task<Void, Never>?
+    private var projectIconGeneration = UUID()
+
+    private func iconKey(_ project: ProjectView) -> String {
+        "\(project.id):\(project.iconPath ?? "automatic")"
+    }
+
+    private func loadProjectArtwork() {
+        guard projectIconTask == nil, let client else { return }
+        let candidates = rawProjects.filter {
+            $0.deviceOnline && Date().timeIntervalSince(projectIconAttempts[iconKey($0)] ?? .distantPast) > 300
+        }
+        guard !candidates.isEmpty else { return }
+        let generation = projectIconGeneration
+        projectIconTask = Task { @MainActor [weak self] in
+            for project in candidates {
+                guard !Task.isCancelled, let self, self.projectIconGeneration == generation else { return }
+                let key = self.iconKey(project)
+                self.projectIconAttempts[key] = Date()
+                let data = try? await client.projectIcon(spaceId: project.id)
+                guard !Task.isCancelled, self.projectIconGeneration == generation else { return }
+                if let data {
+                    self.projectArtwork[key] = data
+                    self.refreshWorkspace()
+                    self.observers.values.forEach { $0() }
+                }
+            }
+            self?.projectIconTask = nil
+        }
+    }
+
+    /// `name: nil` keeps the current name; nil path/color mean automatic.
+    func editProject(_ id: String, name: String?, iconPath: String?, colorIndex: Int?) throws {
+        guard let client else { throw CoreError.InvalidArgument(message: "Sign in to edit projects") }
+        try client.editProject(spaceId: id, name: name, iconPath: iconPath, colorIndex: colorIndex.map(UInt32.init))
+        // Retrying Save also refreshes artwork replaced at the same path.
+        projectIconTask?.cancel()
+        projectIconTask = nil
+        projectIconGeneration = UUID()
+        projectIconAttempts = [:]
+        refreshWorkspace()
+    }
+
+    private func sessionVM(_ row: SessionRow) -> SessionRowVM {
+        var result = Self.vm(row)
+        if let id = row.project?.id, let project = rawProjects.first(where: { $0.id == id }) {
+            result.projectIcon = projectArtwork[iconKey(project)]
+        }
+        return result
+    }
     private var lastHosts: [HostOption] = []
     private var workspaceRevision: UInt64 = 0
     private var observers: [UUID: () -> Void] = [:]
@@ -244,6 +296,11 @@ final class AppModel {
         archived = []
         rows = [:]
         rawProjects = []
+        projectIconTask?.cancel()
+        projectIconTask = nil
+        projectIconGeneration = UUID()
+        projectArtwork = [:]
+        projectIconAttempts = [:]
         lastHosts = []
         connectivity = nil
         live = LiveCounts()
@@ -368,10 +425,15 @@ final class AppModel {
         guard let client else { return }
         let ws = client.workspace()
         workspaceRevision = ws.revision
+        let projectsChanged = rawProjects != ws.projects
+        rawProjects = ws.projects
+        let validIconKeys = Set(rawProjects.map(iconKey))
+        projectArtwork = projectArtwork.filter { validIconKeys.contains($0.key) }
+        projectIconAttempts = projectIconAttempts.filter { validIconKeys.contains($0.key) }
         var all: [String: SessionRow] = [:]
         func vm(_ r: SessionRow) -> SessionRowVM {
             all[r.id] = r
-            return Self.vm(r)
+            return sessionVM(r)
         }
         var page = FrontPage()
         let pinned = ws.front.pinned.map(vm)
@@ -401,12 +463,13 @@ final class AppModel {
         rows = all
         // Devices coming and going (Settings, host pickers) count as changes.
         let hosts = hostOptions
-        let changed = page != frontPage || archivedVMs != archived || counts != live || hosts != lastHosts
+        let changed = projectsChanged || page != frontPage || archivedVMs != archived || counts != live || hosts != lastHosts
         lastHosts = hosts
         live = counts
         frontPage = page
         archived = archivedVMs
         if changed { observers.values.forEach { $0() } }
+        loadProjectArtwork()
     }
 
     /// Like the desktop's project grouping: checkouts of one repository
@@ -474,7 +537,7 @@ final class AppModel {
     }
 
     func session(_ id: String) -> SessionRowVM? {
-        rows[id].map(Self.vm) ?? client?.sessionRow(chatId: id).map(Self.vm)
+        rows[id].map(sessionVM) ?? client?.sessionRow(chatId: id).map(sessionVM)
     }
 
     func row(_ id: String) -> SessionRow? {
@@ -488,7 +551,7 @@ final class AppModel {
     func search(_ query: String) -> [SessionRowVM] {
         let q = query.trimmingCharacters(in: .whitespaces)
         guard let client, !q.isEmpty else { return frontPage.sessions }
-        return client.search(query: q, limit: 60).map { Self.vm($0.session) }
+        return client.search(query: q, limit: 60).map { sessionVM($0.session) }
     }
 
 
@@ -572,7 +635,7 @@ final class AppModel {
     }
 
     var projectOptions: [ProjectOption] {
-        rawProjects.map { ProjectOption(id: $0.id, name: $0.name, path: $0.path, device: $0.deviceId, deviceName: $0.deviceName ?? deviceName($0.deviceId), online: $0.deviceOnline, git: $0.gitDetected, groupKey: $0.groupKey, groupName: $0.groupName, colorIndex: Int($0.colorIndex)) }
+        rawProjects.map { ProjectOption(id: $0.id, name: $0.name, path: $0.path, device: $0.deviceId, deviceName: $0.deviceName ?? deviceName($0.deviceId), online: $0.deviceOnline, git: $0.gitDetected, groupKey: $0.groupKey, groupName: $0.groupName, colorIndex: Int($0.colorIndex), iconPath: $0.iconPath, customColorIndex: $0.customColorIndex.map(Int.init), iconData: projectArtwork[iconKey($0)]) }
     }
 
     var hostOptions: [HostOption] {
