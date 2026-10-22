@@ -52,6 +52,8 @@ pub struct ProjectRef {
     pub id: String,
     pub name: String,
     pub color_index: u32,
+    /// Custom `#rrggbb` color, when it wins over `color_index`.
+    pub color: Option<String>,
 }
 
 /// One session row, as every list renders it.
@@ -122,6 +124,8 @@ pub struct ProjectView {
     /// The project's chosen artwork path and color; absent means automatic.
     pub icon_path: Option<String>,
     pub custom_color_index: Option<u32>,
+    /// Custom `#rrggbb` color, when it wins over `color_index`.
+    pub color: Option<String>,
     pub name: String,
     pub path: String,
     pub color_index: u32,
@@ -441,14 +445,15 @@ fn build_row(chat: &Chat, rc: &RowContext<'_>, cx: &DeriveContext<'_>) -> Arc<Se
         .space_id
         .as_deref()
         .and_then(|id| rc.spaces.get(id))
-        .map(|space| ProjectRef {
-            id: space.id.clone(),
-            name: space.display_name().to_owned(),
+        .map(|space| {
             // Clones of one repository share their representative's color.
-            color_index: zeron_proto::project_icon::color_index(representative_space(
-                rc.all_spaces,
-                space,
-            )),
+            let representative = representative_space(rc.all_spaces, space);
+            ProjectRef {
+                id: space.id.clone(),
+                name: space.display_name().to_owned(),
+                color_index: zeron_proto::project_icon::color_index(representative),
+                color: zeron_proto::project_icon::custom_color(representative),
+            }
         });
     let device = rc.devices.get(chat.device_id.as_str());
     let config = chat.config.as_ref();
@@ -628,6 +633,7 @@ pub(crate) fn derive(
             ProjectView {
                 icon_path: representative.icon_path.clone(),
                 custom_color_index: representative.color_index,
+                color: zeron_proto::project_icon::custom_color(representative),
                 id: space.id.clone(),
                 name: space.display_name().to_owned(),
                 path: space.path.clone(),

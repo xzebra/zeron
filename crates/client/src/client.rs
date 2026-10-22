@@ -988,6 +988,7 @@ impl Client {
             name: None,
             icon_path: None,
             color_index: None,
+            color: None,
             git_detected,
             git_checked_at: None,
             checkout_id: None,
@@ -1043,17 +1044,19 @@ impl Client {
     }
 
     /// Name, artwork and color for every checkout of the project. `name: None`
-    /// keeps the current name; no artwork path or color means automatic.
+    /// keeps the current name; no artwork path or color means automatic. A
+    /// custom `#rrggbb` color wins over `color_index`.
     pub fn edit_project(
         &self,
         space_id: &str,
         name: Option<&str>,
         icon_path: Option<&str>,
         color_index: Option<u32>,
+        color: Option<&str>,
     ) -> Result<()> {
         if self
             .inner
-            .registry_write(|doc| doc.edit_project(space_id, name, icon_path, color_index))?
+            .registry_write(|doc| doc.edit_project(space_id, name, icon_path, color_index, color))?
         {
             Ok(())
         } else {

@@ -850,6 +850,7 @@ impl WorkspaceHost {
             name: None,
             icon_path: None,
             color_index: None,
+            color: None,
             git_detected: false,
             git_checked_at: None,
             checkout_id: None,
@@ -1057,6 +1058,7 @@ impl WorkspaceHost {
                 name,
                 icon_path: None,
                 color_index: None,
+                color: None,
                 git_detected,
                 git_checked_at: None,
                 checkout_id: None,
@@ -1073,8 +1075,9 @@ impl WorkspaceHost {
         name: Option<&str>,
         icon_path: Option<&str>,
         color_index: Option<u32>,
+        color: Option<&str>,
     ) -> Result<bool, EngineError> {
-        Ok(self.mutate(|doc| doc.edit_project(space_id, name, icon_path, color_index))?)
+        Ok(self.mutate(|doc| doc.edit_project(space_id, name, icon_path, color_index, color))?)
     }
 
     pub fn rename_space(&self, space_id: &str, name: Option<&str>) -> Result<bool, EngineError> {

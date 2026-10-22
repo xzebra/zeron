@@ -79,10 +79,11 @@ final class AppModel {
         }
     }
 
-    /// `name: nil` keeps the current name; nil path/color mean automatic.
-    func editProject(_ id: String, name: String?, iconPath: String?, colorIndex: Int?) throws {
+    /// `name: nil` keeps the current name; nil path/color mean automatic. A
+    /// custom `#rrggbb` color wins over `colorIndex`.
+    func editProject(_ id: String, name: String?, iconPath: String?, colorIndex: Int?, color: String? = nil) throws {
         guard let client else { throw CoreError.InvalidArgument(message: "Sign in to edit projects") }
-        try client.editProject(spaceId: id, name: name, iconPath: iconPath, colorIndex: colorIndex.map(UInt32.init))
+        try client.editProject(spaceId: id, name: name, iconPath: iconPath, colorIndex: colorIndex.map(UInt32.init), color: color)
         // Retrying Save also refreshes artwork replaced at the same path.
         projectIconTask?.cancel()
         projectIconTask = nil
@@ -518,6 +519,7 @@ final class AppModel {
             hasProject: r.project != nil,
             // Project-less sessions tone like the desktop's "home" tile.
             colorIndex: Int(r.project?.colorIndex ?? projectColorIndex(spacePath: "home")),
+            customColor: r.project?.color,
             harness: r.harness,
             branch: r.branch,
             pr: r.pullRequest.map { pr in
@@ -635,7 +637,7 @@ final class AppModel {
     }
 
     var projectOptions: [ProjectOption] {
-        rawProjects.map { ProjectOption(id: $0.id, name: $0.name, path: $0.path, device: $0.deviceId, deviceName: $0.deviceName ?? deviceName($0.deviceId), online: $0.deviceOnline, git: $0.gitDetected, groupKey: $0.groupKey, groupName: $0.groupName, colorIndex: Int($0.colorIndex), iconPath: $0.iconPath, customColorIndex: $0.customColorIndex.map(Int.init), iconData: projectArtwork[iconKey($0)]) }
+        rawProjects.map { ProjectOption(id: $0.id, name: $0.name, path: $0.path, device: $0.deviceId, deviceName: $0.deviceName ?? deviceName($0.deviceId), online: $0.deviceOnline, git: $0.gitDetected, groupKey: $0.groupKey, groupName: $0.groupName, colorIndex: Int($0.colorIndex), iconPath: $0.iconPath, customColorIndex: $0.customColorIndex.map(Int.init), customColor: $0.color, iconData: projectArtwork[iconKey($0)]) }
     }
 
     var hostOptions: [HostOption] {

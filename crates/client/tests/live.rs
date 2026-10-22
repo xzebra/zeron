@@ -57,6 +57,7 @@ fn host_rows(now: chrono::DateTime<Utc>) -> (Device, Space, Chat) {
         name: Some("Live".into()),
         icon_path: None,
         color_index: None,
+        color: None,
         git_detected: true,
         git_checked_at: None,
         checkout_id: None,

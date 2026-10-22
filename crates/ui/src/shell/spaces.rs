@@ -9,12 +9,14 @@
 //! Child module of `shell` so it renders straight off `Shell`'s private state.
 
 use super::*;
+use crate::files::client::{FilesRequestContext, WorkspaceFilesClient};
 use crate::pickers::{
     breadcrumbs, browser_rows, completion_prefix_len, folder_path_key, parent_path,
     same_folder_path,
 };
 use gpui::{FocusHandle, Window};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use zeron_proto::project_icon::ProjectColor;
 use zeron_proto::{
     ChatIndicator, Device, DriveEntry, DriveListing, FolderListing, HomeFolderMatch,
     HomeFolderSearchResult, SearchHomeFoldersRequest, Space,
@@ -2646,17 +2648,70 @@ pub(super) struct EditProjectDialog {
     pub space_id: String,
     pub input: Entity<ComposerInput>,
     pub icon_input: Entity<ComposerInput>,
+    /// `#RRGGBB`; a valid entry selects it as the custom color.
+    pub hex_input: Entity<ComposerInput>,
     /// Chosen monogram color; `None` keeps the path-derived one.
-    pub color: Option<u32>,
+    pub color: Option<ProjectColor>,
     pub derived_color: u32,
     /// The name shown on open; leaving it untouched keeps the stored name.
     pub original_name: String,
+    /// Where artwork is read and browsed: this device's checkout, else the
+    /// representative's on its host.
+    pub artwork: FilesRequestContext,
     /// This device's checkout of the project, for choosing artwork from disk.
     pub local_root: Option<std::path::PathBuf>,
+    /// The live tile preview and the icon path it loaded.
+    pub preview: Option<(Option<String>, Entity<super::project_icon::ProjectIcon>)>,
+    pub browser: Option<IconBrowser>,
     pub error: Option<String>,
     pub focus_pending: bool,
     pub _events: Vec<Subscription>,
 }
+
+/// The Edit Project dialog's searchable list of the checkout's images.
+pub(super) struct IconBrowser {
+    pub filter: Entity<ComposerInput>,
+    /// Ranked checkout-relative paths; `None` while searching.
+    pub results: Option<Result<Vec<String>, String>>,
+    pub active: usize,
+    pub scroll: gpui::UniformListScrollHandle,
+    pub thumbnails: HashMap<String, Entity<super::project_icon::ProjectIcon>>,
+    pub focus_pending: bool,
+    pub _search: Option<Task<()>>,
+    pub _events: Subscription,
+}
+
+/// The dialog's swatches, in hue order: legacy slots stay plain slots for
+/// older peers; the others are saved as custom colors.
+const EDIT_PROJECT_SWATCHES: [ProjectColor; 20] = {
+    use ProjectColor::{Custom, Palette};
+    use zeron_proto::project_icon::EXTRA_PALETTE as X;
+    [
+        Palette(0),    // slate
+        Custom(X[0]),  // stone
+        Custom(X[1]),  // red
+        Palette(3),    // rose
+        Custom(X[2]),  // pink
+        Custom(X[3]),  // fuchsia
+        Custom(X[4]),  // purple
+        Palette(2),    // violet
+        Custom(X[5]),  // indigo
+        Palette(1),    // blue
+        Custom(X[6]),  // sky
+        Custom(X[7]),  // cyan
+        Palette(6),    // teal
+        Palette(5),    // emerald
+        Custom(X[8]),  // green
+        Custom(X[9]),  // lime
+        Custom(X[10]), // yellow
+        Palette(4),    // amber
+        Palette(7),    // orange
+        Custom(X[11]), // brown
+    ]
+};
+
+/// Rows the icon browser shows before scrolling.
+const ICON_BROWSER_ROWS: usize = 6;
 
 /// Dot color for a chat's display status (tab dots + Sessions rows).
 pub(crate) fn status_dot_color(status: ChatIndicator, theme: &Theme) -> gpui::Hsla {
@@ -6714,6 +6769,7 @@ impl Shell {
             name: None,
             icon_path: None,
             color_index: None,
+            color: None,
             git_detected,
             git_checked_at: None,
             checkout_id: None,
@@ -7524,8 +7580,21 @@ impl Shell {
         let current = representative.display_name().to_string();
         let original_name = current.clone();
         let current_icon = representative.icon_path.clone().unwrap_or_default();
-        let color = representative.color_index;
+        let color = match zeron_proto::project_icon::project_color(representative) {
+            ProjectColor::Palette(_) => representative.color_index.map(ProjectColor::Palette),
+            custom => Some(custom),
+        };
+        // A custom color that isn't one of the swatches shows its hex.
+        let current_hex = match color {
+            Some(custom @ ProjectColor::Custom(rgb))
+                if !EDIT_PROJECT_SWATCHES.contains(&custom) =>
+            {
+                zeron_proto::project_icon::format_color(rgb)
+            }
+            _ => String::new(),
+        };
         let derived_color = zeron_proto::project_icon::path_color_index(&representative.path);
+        let artwork = super::project_icon::artwork_context(state, space);
         let local_root = state
             .project_members(space)
             .into_iter()
@@ -7535,30 +7604,189 @@ impl Shell {
             });
         let icon_input = cx.new(|cx| ComposerInput::new("Automatic", cx));
         icon_input.update(cx, |input, cx| input.set_text(current_icon, cx));
+        let hex_input = cx.new(|cx| ComposerInput::new("#RRGGBB", cx));
+        hex_input.update(cx, |input, cx| input.set_text(current_hex, cx));
         let input = cx.new(|cx| ComposerInput::new("Project name", cx));
         input.update(cx, |input, cx| input.set_text(current, cx));
-        let events = cx.subscribe(&input, |this: &mut Shell, _, event, cx| {
-            if matches!(event, ComposerInputEvent::Submitted) {
-                this.submit_edit_project(cx);
-            }
+        let submit_or_redraw =
+            |this: &mut Shell, event: &ComposerInputEvent, cx: &mut Context<Shell>| {
+                match event {
+                    ComposerInputEvent::Submitted => this.submit_edit_project(cx),
+                    // The preview follows the name and icon path.
+                    ComposerInputEvent::Edited => cx.notify(),
+                    _ => {}
+                }
+            };
+        let events = cx.subscribe(&input, move |this, _, event, cx| {
+            submit_or_redraw(this, event, cx)
         });
-        let icon_events = cx.subscribe(&icon_input, |this: &mut Shell, _, event, cx| {
-            if matches!(event, ComposerInputEvent::Submitted) {
-                this.submit_edit_project(cx);
-            }
+        let icon_events = cx.subscribe(&icon_input, move |this, _, event, cx| {
+            submit_or_redraw(this, event, cx)
         });
+        let hex_events = cx.subscribe(
+            &hex_input,
+            |this: &mut Shell, input, event, cx| match event {
+                ComposerInputEvent::Submitted => this.submit_edit_project(cx),
+                ComposerInputEvent::Edited => {
+                    let rgb = zeron_proto::project_icon::parse_color(input.read(cx).text());
+                    if let (Some(rgb), Some(dialog)) = (rgb, this.edit_project_dialog.as_mut()) {
+                        dialog.color = Some(ProjectColor::Custom(rgb));
+                        dialog.error = None;
+                    }
+                    cx.notify();
+                }
+                _ => {}
+            },
+        );
         self.edit_project_dialog = Some(EditProjectDialog {
             space_id,
             input,
             icon_input,
+            hex_input,
             color,
             derived_color,
             original_name,
+            artwork,
             local_root,
+            preview: None,
+            browser: None,
             error: None,
             focus_pending: true,
-            _events: vec![events, icon_events],
+            _events: vec![events, icon_events, hex_events],
         });
+        cx.notify();
+    }
+
+    /// Open (or close) the in-dialog browser of the checkout's images. It
+    /// searches through the owning host, so remote checkouts work too.
+    fn toggle_icon_browser(&mut self, cx: &mut Context<Self>) {
+        let Some(dialog) = self.edit_project_dialog.as_mut() else {
+            return;
+        };
+        if dialog.browser.take().is_some() {
+            cx.notify();
+            return;
+        }
+        let filter = cx.new(|cx| ComposerInput::new("Filter images", cx));
+        let events = cx.subscribe(&filter, |this: &mut Shell, _, event, cx| match event {
+            ComposerInputEvent::Edited => this.search_icon_browser(cx),
+            ComposerInputEvent::Submitted => this.pick_browsed_icon(None, cx),
+            _ => {}
+        });
+        dialog.browser = Some(IconBrowser {
+            filter,
+            results: None,
+            active: 0,
+            scroll: gpui::UniformListScrollHandle::new(),
+            thumbnails: HashMap::new(),
+            focus_pending: true,
+            _search: None,
+            _events: events,
+        });
+        self.search_icon_browser(cx);
+        cx.notify();
+    }
+
+    fn search_icon_browser(&mut self, cx: &mut Context<Self>) {
+        let engine = self.state.read(cx).engine().cloned();
+        let Some(dialog) = self.edit_project_dialog.as_mut() else {
+            return;
+        };
+        let context = dialog.artwork.clone();
+        let Some(browser) = dialog.browser.as_mut() else {
+            return;
+        };
+        let filter = browser.filter.read(cx).text().to_string();
+        let Some(engine) = engine else {
+            browser.results = Some(Err("Not connected".into()));
+            return;
+        };
+        browser._search = Some(cx.spawn(async move |this, cx| {
+            // Coalesce typing.
+            cx.background_executor()
+                .timer(Duration::from_millis(120))
+                .await;
+            let client = WorkspaceFilesClient::new(engine, context.clone());
+            let mut paths = Vec::new();
+            let mut failure = None;
+            for query in zeron_proto::project_icon::browse_queries(&filter) {
+                match client
+                    .search(zeron_proto::SearchWorkspaceFilesRequest {
+                        target: context.target.clone(),
+                        query,
+                        include_ignored: false,
+                        limit: None,
+                    })
+                    .await
+                {
+                    Ok(found) => paths.extend(
+                        found
+                            .into_iter()
+                            .filter(|found| found.kind == zeron_proto::WorkspaceEntryKind::File)
+                            .map(|found| found.path),
+                    ),
+                    Err(error) => failure = Some(error.to_string()),
+                }
+            }
+            let results = match failure {
+                Some(error) if paths.is_empty() => Err(error),
+                _ => Ok(zeron_proto::project_icon::rank_browse_results(
+                    &filter, paths,
+                )),
+            };
+            let _ = this.update(cx, |this, cx| {
+                if let Some(browser) = this
+                    .edit_project_dialog
+                    .as_mut()
+                    .and_then(|dialog| dialog.browser.as_mut())
+                {
+                    browser.results = Some(results);
+                    browser.active = 0;
+                    browser.scroll.scroll_to_item(0, gpui::ScrollStrategy::Top);
+                    cx.notify();
+                }
+            });
+        }));
+    }
+
+    /// Fill the icon path with a browsed image: `index`, else the highlighted row.
+    fn pick_browsed_icon(&mut self, index: Option<usize>, cx: &mut Context<Self>) {
+        let Some(dialog) = self.edit_project_dialog.as_mut() else {
+            return;
+        };
+        let Some(browser) = dialog.browser.as_ref() else {
+            return;
+        };
+        let Some(Ok(results)) = &browser.results else {
+            return;
+        };
+        let Some(path) = results.get(index.unwrap_or(browser.active)).cloned() else {
+            return;
+        };
+        dialog.browser = None;
+        dialog.error = None;
+        dialog
+            .icon_input
+            .update(cx, |input, cx| input.set_text(path, cx));
+        cx.notify();
+    }
+
+    fn step_icon_browser(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let Some(browser) = self
+            .edit_project_dialog
+            .as_mut()
+            .and_then(|dialog| dialog.browser.as_mut())
+        else {
+            return;
+        };
+        let count = match &browser.results {
+            Some(Ok(results)) => results.len(),
+            _ => 0,
+        };
+        browser.active = popover::menu_step(Some(browser.active), count, delta).unwrap_or(0);
+        browser
+            .scroll
+            .scroll_to_item(browser.active, gpui::ScrollStrategy::Nearest);
         cx.notify();
     }
 
@@ -7609,6 +7837,7 @@ impl Shell {
                 match relative {
                     Ok(relative) => {
                         dialog.error = None;
+                        dialog.browser = None;
                         dialog
                             .icon_input
                             .update(cx, |input, cx| input.set_text(relative, cx));
@@ -7625,11 +7854,14 @@ impl Shell {
         let Some(dialog) = self.edit_project_dialog.as_mut() else {
             return;
         };
-        let icon_path = match zeron_proto::project_icon::normalize_path(Some(
-            dialog.icon_input.read(cx).text(),
-        )) {
-            Ok(path) => path,
-            Err(message) => {
+        let icon_path =
+            zeron_proto::project_icon::normalize_path(Some(dialog.icon_input.read(cx).text()));
+        // A typed hex that never parsed must not be dropped silently.
+        let hex =
+            zeron_proto::project_icon::normalize_color(Some(dialog.hex_input.read(cx).text()));
+        let icon_path = match (icon_path, hex) {
+            (Ok(path), Ok(_)) => path,
+            (Err(message), _) | (_, Err(message)) => {
                 dialog.error = Some(message.into());
                 cx.notify();
                 return;
@@ -7641,19 +7873,564 @@ impl Shell {
         // Untouched: keep the stored name; blank: restore the folder name.
         let name = dialog.input.read(cx).text().trim().to_string();
         let name = (name != dialog.original_name).then_some(name);
+        // Custom colors carry their nearest legacy slot for older peers.
+        let (color_index, color) = match dialog.color {
+            None => (None, None),
+            Some(ProjectColor::Palette(index)) => (Some(index), None),
+            Some(ProjectColor::Custom(rgb)) => (
+                Some(zeron_proto::project_icon::nearest_index(rgb)),
+                Some(zeron_proto::project_icon::format_color(rgb)),
+            ),
+        };
         self.mutate(
             serde_json::json!({
                 "op": "editProject",
                 "spaceId": dialog.space_id,
                 "name": name,
                 "iconPath": icon_path,
-                "colorIndex": dialog.color,
+                "colorIndex": color_index,
+                "color": color,
             }),
             cx,
         );
         // Reload artwork now, even when only the file behind the path changed.
         self.project_icons.clear();
         cx.notify();
+    }
+
+    /// Name, icon path (typed or browsed), color swatches or a custom hex,
+    /// with a live preview of the resulting tile.
+    fn render_edit_project_dialog(
+        &mut self,
+        theme: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let engine = self.state.read(cx).engine().cloned();
+        let dialog = self.edit_project_dialog.as_mut()?;
+        if std::mem::take(&mut dialog.focus_pending) {
+            window.focus(&dialog.input.focus_handle(cx), cx);
+        }
+        if let Some(browser) = dialog.browser.as_mut()
+            && std::mem::take(&mut browser.focus_pending)
+        {
+            window.focus(&browser.filter.focus_handle(cx), cx);
+        }
+        let color = dialog
+            .color
+            .unwrap_or(ProjectColor::Palette(dialog.derived_color));
+        let name = dialog.input.read(cx).text().trim().to_string();
+        let name = if name.is_empty() {
+            dialog.original_name.clone()
+        } else {
+            name
+        };
+        // Load artwork for the path as typed; an invalid path previews the monogram.
+        let preview_path =
+            zeron_proto::project_icon::normalize_path(Some(dialog.icon_input.read(cx).text())).ok();
+        let artwork = preview_path.and_then(|path| {
+            if dialog.preview.as_ref().map(|(loaded, _)| loaded) != Some(&path) {
+                let context = dialog.artwork.clone();
+                let icon_path = path.clone();
+                let engine = engine.clone();
+                let entity = cx.new(|cx| {
+                    super::project_icon::ProjectIcon::new(
+                        String::new(),
+                        color,
+                        context,
+                        icon_path,
+                        engine,
+                        36.0,
+                        cx,
+                    )
+                });
+                cx.observe(&entity, |_, _, cx| cx.notify()).detach();
+                dialog.preview = Some((path, entity));
+            }
+            dialog
+                .preview
+                .as_ref()
+                .map(|(_, entity)| entity.clone())
+                .filter(|entity| entity.read(cx).has_artwork())
+        });
+        let tone = super::project_icon::monogram_tone(color, theme);
+        let letter = name
+            .chars()
+            .next()
+            .unwrap_or('?')
+            .to_uppercase()
+            .to_string();
+        let tile = div()
+            .size(px(36.0))
+            .flex_none()
+            .rounded(px(8.0))
+            .overflow_hidden()
+            .flex()
+            .items_center()
+            .justify_center()
+            .map(|el| match artwork {
+                Some(artwork) => el.child(artwork),
+                None => el
+                    .bg(tone.opacity(0.14))
+                    .text_color(tone)
+                    .font_family(theme.font_mono.clone())
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_size(px(17.0))
+                    .child(letter),
+            });
+
+        let input = dialog.input.clone();
+        let icon_input = dialog.icon_input.clone();
+        let hex_input = dialog.hex_input.clone();
+        let error = dialog.error.clone();
+        let can_choose = dialog.local_root.is_some();
+        let browsing = dialog.browser.is_some();
+        let hex = zeron_proto::project_icon::parse_color(hex_input.read(cx).text());
+        let section_label = |label: &'static str| {
+            div()
+                .mt(px(14.0))
+                .text_size(crate::typography::ui_rems(12.0))
+                .text_color(theme.text_muted)
+                .child(label)
+        };
+        let swatch = |id: (&'static str, usize), tone: gpui::Hsla, selected: bool| {
+            div()
+                .id(id)
+                .size(px(24.0))
+                .flex_none()
+                .rounded(px(6.0))
+                .border_2()
+                .border_color(if selected {
+                    theme.text
+                } else {
+                    gpui::transparent_black()
+                })
+                .bg(tone)
+                .cursor_pointer()
+        };
+        let swatches = EDIT_PROJECT_SWATCHES
+            .iter()
+            .enumerate()
+            .map(|(ix, swatch_color)| {
+                let swatch_color = *swatch_color;
+                swatch(
+                    ("edit-project-color", ix),
+                    super::project_icon::monogram_tone(swatch_color, theme),
+                    swatch_color == color,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if let Some(dialog) = this.edit_project_dialog.as_mut() {
+                        dialog.color = Some(swatch_color);
+                        dialog
+                            .hex_input
+                            .update(cx, |input, cx| input.set_text(String::new(), cx));
+                        cx.notify();
+                    }
+                }))
+            })
+            .collect::<Vec<_>>();
+        let custom_swatch = match hex {
+            Some(rgb) => swatch(
+                ("edit-project-custom-color", 0),
+                super::project_icon::monogram_tone(ProjectColor::Custom(rgb), theme),
+                color == ProjectColor::Custom(rgb),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if let Some(dialog) = this.edit_project_dialog.as_mut() {
+                    dialog.color = Some(ProjectColor::Custom(rgb));
+                    cx.notify();
+                }
+            })),
+            None => swatch(
+                ("edit-project-custom-color", 0),
+                crate::theme::ink(0.04),
+                false,
+            )
+            .border_1()
+            .border_color(crate::theme::hairline(0.12))
+            .cursor_default(),
+        };
+
+        let browser = self.render_icon_browser(theme, can_choose, cx);
+        let card = popover::dialog_card(theme)
+            .on_key_down(cx.listener(|this, ev: &gpui::KeyDownEvent, _, cx| {
+                let browsing = this
+                    .edit_project_dialog
+                    .as_ref()
+                    .is_some_and(|dialog| dialog.browser.is_some());
+                match ev.keystroke.key.as_str() {
+                    "escape" if browsing => {
+                        if let Some(dialog) = this.edit_project_dialog.as_mut() {
+                            dialog.browser = None;
+                        }
+                    }
+                    "escape" => this.edit_project_dialog = None,
+                    "up" if browsing => this.step_icon_browser(-1, cx),
+                    "down" if browsing => this.step_icon_browser(1, cx),
+                    _ => return,
+                }
+                cx.notify();
+                cx.stop_propagation();
+            }))
+            .child(popover::dialog_title(theme, "Edit Project"))
+            .child(
+                div()
+                    .mt(px(12.0))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(10.0))
+                    .child(tile)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(popover::dialog_field(input.into_any_element())),
+                    ),
+            )
+            .child(section_label("Icon"))
+            .child(
+                div()
+                    .mt(px(6.0))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(popover::dialog_field(icon_input.into_any_element())),
+                    )
+                    .child(
+                        popover::btn_ghost(
+                            theme,
+                            if browsing { "Hide" } else { "Browse…" },
+                            "edit-project-browse",
+                        )
+                        .id("edit-project-browse")
+                        .flex_none()
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_icon_browser(cx))),
+                    ),
+            )
+            .children(browser)
+            .when(!browsing, |el| {
+                el.child(
+                    div()
+                        .mt(px(6.0))
+                        .text_size(crate::typography::ui_rems(11.0))
+                        .text_color(theme.text_muted)
+                        .child("Relative to the repository root. Blank is automatic."),
+                )
+            })
+            .child(section_label("Color"))
+            .child(
+                div()
+                    .mt(px(6.0))
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .gap(px(8.0))
+                    .children(swatches),
+            )
+            .child(
+                div()
+                    .mt(px(10.0))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(custom_swatch)
+                    .child(
+                        div()
+                            .w(px(116.0))
+                            .flex_none()
+                            .child(popover::dialog_field(hex_input.into_any_element())),
+                    )
+                    .child(
+                        div()
+                            .text_size(crate::typography::ui_rems(12.0))
+                            .text_color(theme.text_muted)
+                            .child("Custom"),
+                    ),
+            )
+            .when_some(error, |el, error| {
+                el.child(
+                    div()
+                        .mt(px(8.0))
+                        .text_size(crate::typography::ui_rems(12.0))
+                        .text_color(theme.danger)
+                        .child(error),
+                )
+            })
+            .child(
+                div()
+                    .mt(px(16.0))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        popover::btn_ghost(theme, "Reset Icon", "edit-project-reset")
+                            .id("edit-project-reset")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(dialog) = this.edit_project_dialog.as_mut() {
+                                    dialog.color = None;
+                                    dialog.error = None;
+                                    dialog.browser = None;
+                                    for input in [&dialog.icon_input, &dialog.hex_input] {
+                                        input.update(cx, |input, cx| {
+                                            input.set_text(String::new(), cx)
+                                        });
+                                    }
+                                    cx.notify();
+                                }
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap(px(8.0))
+                            .child(
+                                popover::btn_ghost(theme, "Cancel", "edit-project-cancel")
+                                    .id("edit-project-cancel")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.edit_project_dialog = None;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                popover::btn_primary(theme, "Save")
+                                    .id("edit-project-save")
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.submit_edit_project(cx)),
+                                    ),
+                            ),
+                    ),
+            );
+        Some(card.into_any_element())
+    }
+
+    /// The icon browser panel: a filter over a virtualized list of images
+    /// with thumbnails; thumbnails load only for rows on screen.
+    fn render_icon_browser(
+        &mut self,
+        theme: &Theme,
+        can_choose: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let browser = self.edit_project_dialog.as_ref()?.browser.as_ref()?;
+        const ROW_HEIGHT: f32 = 28.0;
+        let note = |text: String| {
+            div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .px(px(12.0))
+                .text_size(crate::typography::ui_rems(12.0))
+                .text_color(theme.text_muted)
+                .child(text)
+                .into_any_element()
+        };
+        let list = match &browser.results {
+            None => note("Searching images…".into()),
+            Some(Err(error)) => note(error.clone()),
+            Some(Ok(results)) if results.is_empty() => note("No images found".into()),
+            Some(Ok(results)) => {
+                let shell = cx.entity();
+                gpui::uniform_list(
+                    "edit-project-icon-list",
+                    results.len(),
+                    move |range, _, app| {
+                        shell.update(app, |this, cx| this.render_icon_browser_rows(range, cx))
+                    },
+                )
+                .size_full()
+                .px(px(popover::CARD_INSET))
+                .track_scroll(&browser.scroll)
+                .into_any_element()
+            }
+        };
+        let filter = browser.filter.clone();
+        Some(
+            div()
+                .mt(px(8.0))
+                .rounded(px(8.0))
+                .border_1()
+                .border_color(crate::theme::hairline(0.08))
+                .bg(crate::theme::ink(0.02))
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .h(px(34.0))
+                        .px(px(10.0))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.0))
+                        .border_b_1()
+                        .border_color(crate::theme::hairline(0.08))
+                        .child(
+                            icon(icons::MAGNIFER)
+                                .size(px(13.0))
+                                .flex_none()
+                                .text_color(theme.text_muted),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_size(crate::typography::ui_rems(13.0))
+                                .child(filter),
+                        ),
+                )
+                .child(
+                    div()
+                        .id("edit-project-icon-list-host")
+                        .h(px(ROW_HEIGHT * ICON_BROWSER_ROWS as f32 + 8.0))
+                        .py(px(popover::CARD_INSET))
+                        .child(list),
+                )
+                .when(can_choose, |el| {
+                    el.child(
+                        div()
+                            .px(px(4.0))
+                            .py(px(4.0))
+                            .border_t_1()
+                            .border_color(crate::theme::hairline(0.08))
+                            .flex()
+                            .flex_row()
+                            .justify_end()
+                            .child(
+                                popover::btn_ghost(
+                                    theme,
+                                    if cfg!(target_os = "macos") {
+                                        "Choose in Finder…"
+                                    } else {
+                                        "Choose File…"
+                                    },
+                                    "edit-project-choose-icon",
+                                )
+                                .id("edit-project-choose-icon")
+                                .text_size(crate::typography::ui_rems(12.0))
+                                .py(px(4.0))
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.choose_project_icon(cx)),
+                                ),
+                            ),
+                    )
+                })
+                .into_any_element(),
+        )
+    }
+
+    fn render_icon_browser_rows(
+        &mut self,
+        range: std::ops::Range<usize>,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let theme = Theme::of(cx).for_popup();
+        let engine = self.state.read(cx).engine().cloned();
+        let Some(dialog) = self.edit_project_dialog.as_mut() else {
+            return Vec::new();
+        };
+        let context = dialog.artwork.clone();
+        let Some(browser) = dialog.browser.as_mut() else {
+            return Vec::new();
+        };
+        let Some(Ok(results)) = &browser.results else {
+            return Vec::new();
+        };
+        let visible: Vec<(usize, String)> = range
+            .filter_map(|ix| results.get(ix).map(|path| (ix, path.clone())))
+            .collect();
+        let mut rows = Vec::new();
+        for (ix, path) in visible {
+            let path = &path;
+            let thumbnail = browser
+                .thumbnails
+                .entry(path.clone())
+                .or_insert_with(|| {
+                    let (context, path, engine) = (context.clone(), path.clone(), engine.clone());
+                    let entity = cx.new(|cx| {
+                        super::project_icon::ProjectIcon::new(
+                            String::new(),
+                            ProjectColor::Palette(0),
+                            context,
+                            Some(path),
+                            engine,
+                            18.0,
+                            cx,
+                        )
+                    });
+                    cx.observe(&entity, |_, _, cx| cx.notify()).detach();
+                    entity
+                })
+                .clone();
+            let art = if thumbnail.read(cx).has_artwork() {
+                thumbnail.into_any_element()
+            } else {
+                icon(icons::FILE_IMAGE)
+                    .size(px(14.0))
+                    .text_color(theme.text_muted)
+                    .into_any_element()
+            };
+            let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
+            rows.push(
+                popover::picker_row(
+                    &theme,
+                    false,
+                    ix == browser.active,
+                    format!("edit-project-icon-{path}"),
+                )
+                .id(("edit-project-icon", ix))
+                .w_full()
+                .h(px(28.0))
+                .min_h(px(28.0))
+                .on_click(cx.listener(move |this, _, _, cx| this.pick_browsed_icon(Some(ix), cx)))
+                .child(
+                    div()
+                        .size(px(18.0))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(art),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_row()
+                        .items_baseline()
+                        .gap(px(6.0))
+                        .text_size(crate::typography::ui_rems(12.5))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .max_w(px(200.0))
+                                .truncate()
+                                .whitespace_nowrap()
+                                .child(name.to_string()),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .whitespace_nowrap()
+                                .text_color(theme.text_muted)
+                                .child(folder.to_string()),
+                        ),
+                )
+                .into_any_element(),
+            );
+        }
+        rows
     }
 
     pub(super) fn delete_space(&mut self, space_id: String, cx: &mut Context<Self>) {
@@ -7722,137 +8499,7 @@ impl Shell {
             ));
         }
 
-        if let Some(dialog) = &mut self.edit_project_dialog {
-            if std::mem::take(&mut dialog.focus_pending) {
-                window.focus(&dialog.input.focus_handle(cx), cx);
-            }
-            let input = dialog.input.clone();
-            let icon_input = dialog.icon_input.clone();
-            let error = dialog.error.clone();
-            let can_choose = dialog.local_root.is_some();
-            let selected_color = dialog.color.unwrap_or(dialog.derived_color);
-            let card = popover::dialog_card(&theme)
-                .on_key_down(cx.listener(|this, ev: &gpui::KeyDownEvent, _, cx| {
-                    if ev.keystroke.key == "escape" {
-                        this.edit_project_dialog = None;
-                        cx.notify();
-                        cx.stop_propagation();
-                    }
-                }))
-                .child(popover::dialog_title(&theme, "Edit Project"))
-                .child(
-                    div()
-                        .mt(px(12.0))
-                        .child(popover::dialog_field(input.into_any_element())),
-                )
-                .child(div().mt(px(12.0)).text_size(px(12.0)).child("Icon path"))
-                .child(
-                    div()
-                        .mt(px(6.0))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(8.0))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .child(popover::dialog_field(icon_input.into_any_element())),
-                        )
-                        .when(can_choose, |el| {
-                            el.child(
-                                popover::btn_ghost(&theme, "Choose…", "edit-project-choose-icon")
-                                    .id("edit-project-choose-icon")
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.choose_project_icon(cx)),
-                                    ),
-                            )
-                        }),
-                )
-                .child(
-                    div()
-                        .mt(px(6.0))
-                        .text_size(px(11.0))
-                        .text_color(theme.text_muted)
-                        .child("Relative to the repository root, e.g. apps/web/public/icon.png. Leave blank for automatic."),
-                )
-                .child(div().mt(px(12.0)).text_size(px(12.0)).child("Color"))
-                .child(
-                    div()
-                        .mt(px(6.0))
-                        .flex()
-                        .flex_row()
-                        .gap(px(6.0))
-                        .children((0..zeron_proto::project_icon::COLOR_COUNT).map(|color| {
-                            let tone = super::project_icon::monogram_tone(color, &theme);
-                            div()
-                                .id(("edit-project-color", color as usize))
-                                .size(px(20.0))
-                                .rounded(px(5.0))
-                                .border_2()
-                                .border_color(if color == selected_color {
-                                    theme.text
-                                } else {
-                                    gpui::transparent_black()
-                                })
-                                .bg(tone)
-                                .cursor_pointer()
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    if let Some(dialog) = this.edit_project_dialog.as_mut() {
-                                        dialog.color = Some(color);
-                                        cx.notify();
-                                    }
-                                }))
-                        })),
-                )
-                .when_some(error, |el, error| {
-                    el.child(
-                        div()
-                            .mt(px(8.0))
-                            .text_size(px(12.0))
-                            .text_color(theme.danger)
-                            .child(error),
-                    )
-                })
-                .child(
-                    div()
-                        .mt(px(16.0))
-                        .flex()
-                        .flex_row()
-                        .justify_end()
-                        .gap(px(8.0))
-                        .child(
-                            popover::btn_ghost(&theme, "Reset Icon", "edit-project-reset")
-                                .id("edit-project-reset")
-                                .mr_auto()
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    if let Some(dialog) = this.edit_project_dialog.as_mut() {
-                                        dialog.color = None;
-                                        dialog.error = None;
-                                        dialog
-                                            .icon_input
-                                            .update(cx, |input, cx| input.set_text(String::new(), cx));
-                                        cx.notify();
-                                    }
-                                })),
-                        )
-                        .child(
-                            popover::btn_ghost(&theme, "Cancel", "edit-project-cancel")
-                                .id("edit-project-cancel")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.edit_project_dialog = None;
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            popover::btn_primary(&theme, "Save")
-                                .id("edit-project-save")
-                                .on_click(
-                                    cx.listener(|this, _, _, cx| this.submit_edit_project(cx)),
-                                ),
-                        ),
-                )
-                .into_any_element();
+        if let Some(card) = self.render_edit_project_dialog(&theme, window, cx) {
             overlays.push(popover::modal("edit-project-dialog", viewport, card));
         }
 
@@ -7911,6 +8558,40 @@ impl Shell {
         }
 
         overlays
+    }
+}
+
+/// Native visual QA for the Edit Project dialog (no engine: browse results
+/// are supplied; thumbnails read the local checkout).
+#[cfg(feature = "appshots-fixture")]
+impl Shell {
+    pub fn fixture_edit_project(&mut self, space_id: &str, cx: &mut Context<Self>) {
+        self.open_edit_project(space_id.into(), cx);
+    }
+    pub fn fixture_edit_project_hex(&mut self, hex: &str, cx: &mut Context<Self>) {
+        if let Some(dialog) = &self.edit_project_dialog {
+            let hex = hex.to_string();
+            dialog
+                .hex_input
+                .update(cx, |input, cx| input.set_text(hex, cx));
+        }
+    }
+    pub fn fixture_edit_project_browse(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
+        self.toggle_icon_browser(cx);
+        if let Some(browser) = self
+            .edit_project_dialog
+            .as_mut()
+            .and_then(|dialog| dialog.browser.as_mut())
+        {
+            browser._search = None;
+            browser.results = Some(Ok(zeron_proto::project_icon::rank_browse_results(
+                "", paths,
+            )));
+        }
+        cx.notify();
+    }
+    pub fn fixture_edit_project_pick(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.pick_browsed_icon(Some(index), cx);
     }
 }
 

@@ -26,7 +26,7 @@ extension UIViewController {
             do {
                 // An untouched name keeps the stored one (it may be the folder name).
                 let trimmed = name.trimmingCharacters(in: .whitespaces)
-                try app.editProject(id, name: trimmed == project.groupName ? nil : trimmed, iconPath: path, colorIndex: project.customColorIndex)
+                try app.editProject(id, name: trimmed == project.groupName ? nil : trimmed, iconPath: path, colorIndex: project.customColorIndex, color: project.customColor)
             } catch {
                 // Preserve the draft when validation fails or the project disappeared.
                 DispatchQueue.main.async {
@@ -37,15 +37,19 @@ extension UIViewController {
         present(alert, animated: true)
     }
 
-    /// The project's monogram color: Automatic (derived from its path) or a
-    /// palette slot shared with the desktop.
+    /// The project's monogram color: Automatic (derived from its path), a
+    /// palette slot shared with the desktop, or the desktop's custom color.
     func projectColorMenu(_ id: String, app: AppModel) -> UIMenu? {
         guard let project = app.projectOptions.first(where: { $0.id == id }) else { return nil }
         let names = ["Slate", "Blue", "Violet", "Rose", "Amber", "Emerald", "Teal", "Orange"]
         let choices: [(String, Int?)] = [("Automatic", nil)] + names.enumerated().map { ($0.element, $0.offset) }
-        return UIMenu(title: "Project Color", image: UIImage(systemName: "paintpalette"), children: choices.map { title, index in
+        var children: [UIMenuElement] = []
+        if let custom = project.customColor {
+            children.append(UIAction(title: "Custom", subtitle: custom.uppercased(), image: ProjectTile.image(name: project.groupName, colorIndex: project.colorIndex, customColor: custom, side: 18), attributes: .disabled, state: .on) { _ in })
+        }
+        return UIMenu(title: "Project Color", image: UIImage(systemName: "paintpalette"), children: children + choices.map { title, index in
             let tile = index.map { ProjectTile.image(name: project.groupName, colorIndex: $0, side: 18) }
-            return UIAction(title: title, image: tile, state: index == project.customColorIndex ? .on : .off) { [weak self] _ in
+            return UIAction(title: title, image: tile, state: project.customColor == nil && index == project.customColorIndex ? .on : .off) { [weak self] _ in
                 do {
                     try app.editProject(id, name: nil, iconPath: project.iconPath, colorIndex: index)
                 } catch {

@@ -345,12 +345,14 @@ impl CoreClient {
         name: Option<String>,
         icon_path: Option<String>,
         color_index: Option<u32>,
+        color: Option<String>,
     ) -> CoreResult<()> {
         Ok(self.client.edit_project(
             &space_id,
             name.as_deref(),
             icon_path.as_deref(),
             color_index,
+            color.as_deref(),
         )?)
     }
 
@@ -676,6 +678,14 @@ pub fn project_color_index(space_path: String) -> u32 {
 #[uniffi::export]
 pub fn project_color_count() -> u32 {
     zc::workspace::PROJECT_COLOR_COUNT
+}
+
+/// A custom `#rrggbb` project color as `0xRRGGBB`, kept legible in the
+/// given appearance exactly as the desktop draws it. `None` when invalid.
+#[uniffi::export]
+pub fn project_color_tone(color: String, dark: bool) -> Option<u32> {
+    zeron_proto::project_icon::parse_color(&color)
+        .map(|rgb| zeron_proto::project_icon::appearance_tone(rgb, dark))
 }
 
 /// Split a user prompt into visible text + attachment refs.
