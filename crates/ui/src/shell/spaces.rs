@@ -8881,11 +8881,18 @@ impl Shell {
             .and_then(|member| {
                 super::project_icon::checkout_root(std::path::Path::new(&member.path))
             });
-        let icon_input = cx.new(|cx| ComposerInput::new("Automatic", cx));
+        let field = |placeholder, cx: &mut Context<ComposerInput>| {
+            ComposerInput::new(placeholder, cx)
+                .with_single_line()
+                .with_text_metrics(14.0, 18.0)
+                .with_tab_stop()
+                .with_accessibility_role(gpui::Role::TextInput)
+        };
+        let icon_input = cx.new(|cx| field("Automatic", cx));
         icon_input.update(cx, |input, cx| input.set_text(current_icon, cx));
-        let hex_input = cx.new(|cx| ComposerInput::new("#RRGGBB", cx));
+        let hex_input = cx.new(|cx| field("#RRGGBB", cx));
         hex_input.update(cx, |input, cx| input.set_text(current_hex, cx));
-        let input = cx.new(|cx| ComposerInput::new("Project name", cx));
+        let input = cx.new(|cx| field("Project name", cx));
         input.update(cx, |input, cx| input.set_text(current, cx));
         let submit_or_redraw =
             |this: &mut Shell, event: &ComposerInputEvent, cx: &mut Context<Shell>| {
@@ -8946,7 +8953,13 @@ impl Shell {
             cx.notify();
             return;
         }
-        let filter = cx.new(|cx| ComposerInput::new("Filter images", cx));
+        let filter = cx.new(|cx| {
+            ComposerInput::new("Filter images", cx)
+                .with_single_line()
+                .with_text_metrics(13.0, 18.0)
+                .with_tab_stop()
+                .with_accessibility_role(gpui::Role::TextInput)
+        });
         let events = cx.subscribe(&filter, |this: &mut Shell, _, event, cx| match event {
             ComposerInputEvent::Edited => this.search_icon_browser(cx),
             ComposerInputEvent::Submitted => this.pick_browsed_icon(None, cx),
@@ -9375,21 +9388,44 @@ impl Shell {
                     .flex_row()
                     .items_center()
                     .gap(px(8.0))
+                    .child(div().flex_1().min_w_0().child(
+                        popover::dialog_field(icon_input.into_any_element()).py(px(6.0)),
+                    ))
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(popover::dialog_field(icon_input.into_any_element())),
-                    )
-                    .child(
-                        popover::btn_ghost(
-                            theme,
-                            if browsing { "Hide" } else { "Browse…" },
-                            "edit-project-browse",
-                        )
-                        .id("edit-project-browse")
-                        .flex_none()
-                        .on_click(cx.listener(|this, _, _, cx| this.toggle_icon_browser(cx))),
+                            .id("edit-project-browse")
+                            .role(gpui::Role::Button)
+                            .aria_label("Browse project images")
+                            .aria_expanded(browsing)
+                            .tab_index(0)
+                            .size(px(32.0))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(6.0))
+                            .cursor_pointer()
+                            .text_color(theme.text_muted)
+                            .when(browsing, |el| el.bg(theme.glass_hover()))
+                            .hover(|el| el.bg(theme.glass_hover()))
+                            .tooltip(crate::settings::widgets::text_tooltip(
+                                "Browse project images",
+                            ))
+                            .child(
+                                icon(icons::FOLDER)
+                                    .size(px(16.0))
+                                    .flex_none()
+                                    .text_color(theme.text_muted),
+                            )
+                            .on_click(
+                                cx.listener(|this, _, _, cx| this.toggle_icon_browser(cx)),
+                            )
+                            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                    this.toggle_icon_browser(cx);
+                                    cx.stop_propagation();
+                                }
+                            })),
                     ),
             )
             .children(browser)
@@ -9420,18 +9456,9 @@ impl Shell {
                     .items_center()
                     .gap(px(8.0))
                     .child(custom_swatch)
-                    .child(
-                        div()
-                            .w(px(116.0))
-                            .flex_none()
-                            .child(popover::dialog_field(hex_input.into_any_element())),
-                    )
-                    .child(
-                        div()
-                            .text_size(crate::typography::ui_rems(12.0))
-                            .text_color(theme.text_muted)
-                            .child("Custom"),
-                    ),
+                    .child(div().w(px(116.0)).flex_none().child(
+                        popover::dialog_field(hex_input.into_any_element()).py(px(2.0)),
+                    )),
             )
             .when_some(error, |el, error| {
                 el.child(
@@ -9448,24 +9475,7 @@ impl Shell {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .justify_between()
-                    .child(
-                        popover::btn_ghost(theme, "Reset Icon", "edit-project-reset")
-                            .id("edit-project-reset")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                if let Some(dialog) = this.edit_project_dialog.as_mut() {
-                                    dialog.color = None;
-                                    dialog.error = None;
-                                    dialog.browser = None;
-                                    for input in [&dialog.icon_input, &dialog.hex_input] {
-                                        input.update(cx, |input, cx| {
-                                            input.set_text(String::new(), cx)
-                                        });
-                                    }
-                                    cx.notify();
-                                }
-                            })),
-                    )
+                    .justify_end()
                     .child(
                         div()
                             .flex()
@@ -9482,9 +9492,9 @@ impl Shell {
                             .child(
                                 popover::btn_primary(theme, "Save")
                                     .id("edit-project-save")
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.submit_edit_project(cx)),
-                                    ),
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.submit_edit_project(cx)
+                                    })),
                             ),
                     ),
             );
