@@ -807,6 +807,9 @@ fn snapshot_hash(s: &WorkspaceSnapshot) -> u64 {
         project.id.hash(&mut h);
         project.name.hash(&mut h);
         project.path.hash(&mut h);
+        project.icon_path.hash(&mut h);
+        project.custom_color_index.hash(&mut h);
+        project.color.hash(&mut h);
         project.color_index.hash(&mut h);
         project.group_key.hash(&mut h);
         project.group_name.hash(&mut h);

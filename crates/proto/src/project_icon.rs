@@ -41,6 +41,33 @@ pub enum ProjectColor {
     Custom(u32),
 }
 
+pub const SWATCHES: [ProjectColor; 20] = {
+    use EXTRA_PALETTE as X;
+    use ProjectColor::{Custom, Palette};
+    [
+        Palette(0),    // slate
+        Custom(X[0]),  // stone
+        Custom(X[1]),  // red
+        Palette(3),    // rose
+        Custom(X[2]),  // pink
+        Custom(X[3]),  // fuchsia
+        Custom(X[4]),  // purple
+        Palette(2),    // violet
+        Custom(X[5]),  // indigo
+        Palette(1),    // blue
+        Custom(X[6]),  // sky
+        Custom(X[7]),  // cyan
+        Palette(6),    // teal
+        Palette(5),    // emerald
+        Custom(X[8]),  // green
+        Custom(X[9]),  // lime
+        Custom(X[10]), // yellow
+        Palette(4),    // amber
+        Palette(7),    // orange
+        Custom(X[11]), // brown
+    ]
+};
+
 /// The color a project wears. A custom color applies only while
 /// `color_index` still holds its nearest slot, so an older peer that picks
 /// another slot (or resets it) wins over a custom color it can't see.

@@ -325,6 +325,40 @@ impl CoreClient {
             .await
     }
 
+    pub async fn project_images(&self, space_id: String, query: String) -> CoreResult<Vec<String>> {
+        let client = self.client.clone();
+        on_runtime(async move {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                client.project_images(&space_id, &query),
+            )
+            .await
+            .map_err(|_| {
+                zeron_client::ClientError::HostUnavailable("Image search timed out".into())
+            })?
+        })
+        .await
+    }
+
+    pub async fn project_image(&self, space_id: String, path: Option<String>) -> CoreResult<Vec<u8>> {
+        let client = self.client.clone();
+        on_runtime(async move {
+            let (mime, bytes) = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                client.project_image(&space_id, path.as_deref()),
+            )
+            .await
+            .map_err(|_| {
+                zeron_client::ClientError::HostUnavailable("Image preview timed out".into())
+            })??;
+            tokio::task::spawn_blocking(move || crate::project_icon::thumbnail(&mime, bytes))
+                .await
+                .map_err(|_| zeron_client::ClientError::Internal("Icon task failed".into()))?
+                .map_err(zeron_client::ClientError::InvalidArgument)
+        })
+        .await
+    }
+
     pub async fn project_icon(&self, space_id: String) -> CoreResult<Vec<u8>> {
         let client = self.client.clone();
         on_runtime(async move {
@@ -716,6 +750,24 @@ pub fn project_color_count() -> u32 {
 pub fn project_color_tone(color: String, dark: bool) -> Option<u32> {
     zeron_proto::project_icon::parse_color(&color)
         .map(|rgb| zeron_proto::project_icon::appearance_tone(rgb, dark))
+}
+
+#[uniffi::export]
+pub fn project_color_swatches() -> Vec<ProjectColorSwatch> {
+    use zeron_proto::project_icon::{self, ProjectColor};
+    project_icon::SWATCHES
+        .into_iter()
+        .map(|swatch| match swatch {
+            ProjectColor::Palette(index) => ProjectColorSwatch {
+                color: project_icon::format_color(project_icon::LEGACY_PALETTE[index as usize].0),
+                color_index: Some(index),
+            },
+            ProjectColor::Custom(rgb) => ProjectColorSwatch {
+                color: project_icon::format_color(rgb),
+                color_index: None,
+            },
+        })
+        .collect()
 }
 
 /// Split a user prompt into visible text + attachment refs.

@@ -5,29 +5,88 @@ use base64::Engine as _;
 use zeron_proto::{MAX_WORKSPACE_IMAGE_BYTES, WORKSPACE_IMAGE_CHUNK_BYTES, WorkspaceTarget};
 
 impl Client {
-    pub async fn project_icon(&self, space_id: &str) -> Result<(String, Vec<u8>)> {
+    /// Repository artwork candidates for the native project editor.
+    pub async fn project_images(&self, space_id: &str, query: &str) -> Result<Vec<String>> {
+        let (device_id, target) = self.project_artwork_target(space_id)?;
+        let mut paths = Vec::new();
+        let mut failure = None;
+        for query in zeron_proto::project_icon::browse_queries(query) {
+            let request = zeron_proto::SearchWorkspaceFilesRequest {
+                target: target.clone(),
+                query,
+                include_ignored: false,
+                limit: Some(200),
+            };
+            let response = self
+                .inner
+                .host_rpc(
+                    &device_id,
+                    crate::rpc::methods::SEARCH_WORKSPACE_FILES,
+                    serde_json::to_value(request)
+                        .map_err(|_| ClientError::InvalidArgument("Invalid image search".into()))?,
+                )
+                .await;
+            match response {
+                Ok(value) => {
+                    let matches: Vec<zeron_proto::WorkspaceFileSearchMatch> =
+                        serde_json::from_value(value).map_err(|_| {
+                            ClientError::Internal("Invalid image search response".into())
+                        })?;
+                    paths.extend(
+                        matches
+                            .into_iter()
+                            .filter(|file| file.kind == zeron_proto::WorkspaceEntryKind::File)
+                            .map(|file| file.path),
+                    );
+                }
+                Err(error) => failure = Some(error),
+            }
+        }
+        if paths.is_empty()
+            && let Some(error) = failure
+        {
+            return Err(error);
+        }
+        Ok(zeron_proto::project_icon::rank_browse_results(query, paths))
+    }
+
+    fn project_artwork_target(&self, space_id: &str) -> Result<(String, WorkspaceTarget)> {
         let state = self.inner.workspace.state().0;
-        let spaces = &state.spaces;
-        let space = spaces
+        let space = state
+            .spaces
             .iter()
-            .find(|s| s.id == space_id)
+            .find(|space| space.id == space_id)
             .ok_or_else(|| ClientError::NotFound("Project".into()))?;
-        let representative = zeron_proto::view::representative_space(spaces, space);
-        let icon_path =
-            zeron_proto::project_icon::normalize_path(representative.icon_path.as_deref())
-                .map_err(|s| ClientError::InvalidArgument(s.into()))?;
-        let target = WorkspaceTarget {
-            chat_id: None,
-            space_id: Some(space.id.clone()),
-            checkout_path: None,
-        };
+        Ok((
+            space.device_id.clone(),
+            WorkspaceTarget {
+                chat_id: None,
+                space_id: Some(space.id.clone()),
+                checkout_path: None,
+            },
+        ))
+    }
+
+    /// Preview a selection without saving it. `None` resolves automatic artwork.
+    pub async fn project_image(
+        &self,
+        space_id: &str,
+        path: Option<&str>,
+    ) -> Result<(String, Vec<u8>)> {
+        let icon_path = zeron_proto::project_icon::normalize_path(path)
+            .map_err(|error| ClientError::InvalidArgument(error.into()))?;
+        let (device_id, target) = self.project_artwork_target(space_id)?;
         for path in zeron_proto::project_icon::candidates(icon_path.as_deref()) {
             let response = self
                 .inner
                 .host_rpc(
-                    &space.device_id,
+                    &device_id,
                     crate::rpc::methods::READ_WORKSPACE_FILE,
-                    serde_json::json!({"target": target, "path": path}),
+                    serde_json::to_value(zeron_proto::ReadWorkspaceFileRequest {
+                        target: target.clone(),
+                        path: path.into(),
+                    })
+                    .map_err(|_| ClientError::InvalidArgument("Invalid image request".into()))?,
                 )
                 .await;
             let file: zeron_proto::WorkspaceFileText = match response {
@@ -40,10 +99,25 @@ impl Client {
                 Err(error) => return Err(error),
             };
             return self
-                .project_icon_image(&space.device_id, target, path.into(), file.checkout_id)
+                .project_icon_image(&device_id, target, path.into(), file.checkout_id)
                 .await;
         }
         Err(ClientError::NotFound("Project artwork".into()))
+    }
+    /// The project's saved selection, resolved through its owning host.
+    pub async fn project_icon(&self, space_id: &str) -> Result<(String, Vec<u8>)> {
+        let icon_path = {
+            let state = self.inner.workspace.state().0;
+            let space = state
+                .spaces
+                .iter()
+                .find(|space| space.id == space_id)
+                .ok_or_else(|| ClientError::NotFound("Project".into()))?;
+            zeron_proto::view::representative_space(&state.spaces, space)
+                .icon_path
+                .clone()
+        };
+        self.project_image(space_id, icon_path.as_deref()).await
     }
 
     async fn project_icon_image(

@@ -465,6 +465,13 @@ pub struct ProjectRef {
     pub color: Option<String>,
 }
 
+/// One option in the shared desktop/native project color palette.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ProjectColorSwatch {
+    pub color: String,
+    pub color_index: Option<u32>,
+}
+
 /// One session row, as every list renders it.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct SessionRow {

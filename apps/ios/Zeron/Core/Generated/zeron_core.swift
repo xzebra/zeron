@@ -1177,6 +1177,10 @@ public protocol CoreClientProtocol: AnyObject, Sendable {
     
     func projectIcon(spaceId: String) async throws  -> Data
     
+    func projectImage(spaceId: String, path: String?) async throws  -> Data
+    
+    func projectImages(spaceId: String, query: String) async throws  -> [String]
+    
     /**
      * Active sessions without a project.
      */
@@ -1982,6 +1986,38 @@ open func projectIcon(spaceId: String)async throws  -> Data  {
             completeFunc: ffi_zeron_mobile_rust_future_complete_rust_buffer,
             freeFunc: ffi_zeron_mobile_rust_future_free_rust_buffer,
             liftFunc: FfiConverterData.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func projectImage(spaceId: String, path: String?)async throws  -> Data  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_zeron_mobile_fn_method_coreclient_project_image(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(spaceId),FfiConverterOptionString.lower(path)
+                )
+            },
+            pollFunc: ffi_zeron_mobile_rust_future_poll_rust_buffer,
+            completeFunc: ffi_zeron_mobile_rust_future_complete_rust_buffer,
+            freeFunc: ffi_zeron_mobile_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterData.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func projectImages(spaceId: String, query: String)async throws  -> [String]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_zeron_mobile_fn_method_coreclient_project_images(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(spaceId),FfiConverterString.lower(query)
+                )
+            },
+            pollFunc: ffi_zeron_mobile_rust_future_poll_rust_buffer,
+            completeFunc: ffi_zeron_mobile_rust_future_complete_rust_buffer,
+            freeFunc: ffi_zeron_mobile_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceString.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -10840,6 +10876,63 @@ public func FfiConverterTypePendingSend_lift(_ buf: RustBuffer) throws -> Pendin
 #endif
 public func FfiConverterTypePendingSend_lower(_ value: PendingSend) -> RustBuffer {
     return FfiConverterTypePendingSend.lower(value)
+}
+
+
+/**
+ * One option in the shared desktop/native project color palette.
+ */
+public struct ProjectColorSwatch: Equatable, Hashable {
+    public var color: String
+    public var colorIndex: UInt32?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(color: String, colorIndex: UInt32?) {
+        self.color = color
+        self.colorIndex = colorIndex
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ProjectColorSwatch: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeProjectColorSwatch: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ProjectColorSwatch {
+        return
+            try ProjectColorSwatch(
+                color: FfiConverterString.read(from: &buf), 
+                colorIndex: FfiConverterOptionUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ProjectColorSwatch, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.color, into: &buf)
+        FfiConverterOptionUInt32.write(value.colorIndex, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProjectColorSwatch_lift(_ buf: RustBuffer) throws -> ProjectColorSwatch {
+    return try FfiConverterTypeProjectColorSwatch.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProjectColorSwatch_lower(_ value: ProjectColorSwatch) -> RustBuffer {
+    return FfiConverterTypeProjectColorSwatch.lower(value)
 }
 
 
@@ -20812,6 +20905,31 @@ fileprivate struct FfiConverterSequenceTypePendingSend: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeProjectColorSwatch: FfiConverterRustBuffer {
+    typealias SwiftType = [ProjectColorSwatch]
+
+    public static func write(_ value: [ProjectColorSwatch], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeProjectColorSwatch.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ProjectColorSwatch] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ProjectColorSwatch]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeProjectColorSwatch.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeProjectView: FfiConverterRustBuffer {
     typealias SwiftType = [ProjectView]
 
@@ -21640,6 +21758,13 @@ public func projectColorIndex(spacePath: String) -> UInt32  {
     )
 })
 }
+public func projectColorSwatches() -> [ProjectColorSwatch]  {
+    return try!  FfiConverterSequenceTypeProjectColorSwatch.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_zeron_mobile_fn_func_project_color_swatches(uniffiCallStatus
+    )
+})
+}
 /**
  * A custom `#rrggbb` project color as `0xRRGGBB`, kept legible in the
  * given appearance exactly as the desktop draws it. `None` when invalid.
@@ -21870,6 +21995,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_zeron_mobile_checksum_func_project_color_index() != 14874) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_zeron_mobile_checksum_func_project_color_swatches() != 41993) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_zeron_mobile_checksum_func_project_color_tone() != 42511) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -22024,6 +22152,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_zeron_mobile_checksum_method_coreclient_project_icon() != 60329) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zeron_mobile_checksum_method_coreclient_project_image() != 47592) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zeron_mobile_checksum_method_coreclient_project_images() != 4158) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_zeron_mobile_checksum_method_coreclient_projectless_sessions() != 26434) {

@@ -2947,32 +2947,7 @@ pub(super) struct IconBrowser {
 
 /// The dialog's swatches, in hue order: legacy slots stay plain slots for
 /// older peers; the others are saved as custom colors.
-const EDIT_PROJECT_SWATCHES: [ProjectColor; 20] = {
-    use ProjectColor::{Custom, Palette};
-    use zeron_proto::project_icon::EXTRA_PALETTE as X;
-    [
-        Palette(0),    // slate
-        Custom(X[0]),  // stone
-        Custom(X[1]),  // red
-        Palette(3),    // rose
-        Custom(X[2]),  // pink
-        Custom(X[3]),  // fuchsia
-        Custom(X[4]),  // purple
-        Palette(2),    // violet
-        Custom(X[5]),  // indigo
-        Palette(1),    // blue
-        Custom(X[6]),  // sky
-        Custom(X[7]),  // cyan
-        Palette(6),    // teal
-        Palette(5),    // emerald
-        Custom(X[8]),  // green
-        Custom(X[9]),  // lime
-        Custom(X[10]), // yellow
-        Palette(4),    // amber
-        Palette(7),    // orange
-        Custom(X[11]), // brown
-    ]
-};
+const EDIT_PROJECT_SWATCHES: [ProjectColor; 20] = zeron_proto::project_icon::SWATCHES;
 
 /// Rows the icon browser shows before scrolling.
 const ICON_BROWSER_ROWS: usize = 6;
