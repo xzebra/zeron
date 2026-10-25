@@ -636,3 +636,36 @@ fn provider_switch_needs_a_host_that_switches() {
     model.model = Some("another-model".into());
     client.set_session_config("chat-blog", &model).unwrap();
 }
+
+#[tokio::test]
+async fn project_artwork_uses_the_host_image_pipeline_after_editing() {
+    let (client, _dir) = demo(fast());
+    client
+        .edit_project(
+            "space-zeron",
+            None,
+            Some("apps/web/public/favicon.svg"),
+            Some(7),
+            Some("#ff5a1f"),
+        )
+        .unwrap();
+    let workspace = client.workspace();
+    for id in ["space-zeron", "space-zeron-vps"] {
+        let project = workspace
+            .projects
+            .iter()
+            .find(|project| project.id == id)
+            .unwrap();
+        assert_eq!(project.icon_path.as_deref(), Some("apps/web/public/favicon.svg"));
+        assert_eq!(project.color.as_deref(), Some("#ff5a1f"));
+    }
+    let (mime, bytes) = client.project_icon("space-zeron").await.unwrap();
+    assert_eq!(mime, "image/svg+xml");
+    let svg = String::from_utf8(bytes).unwrap();
+    assert!(svg.contains("#668cf5"));
+    assert!(svg.contains("<path"));
+    client
+        .edit_project("space-zeron", None, Some("missing.svg"), None, None)
+        .unwrap();
+    assert!(client.project_icon("space-zeron").await.is_err());
+}
