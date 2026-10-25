@@ -21,7 +21,8 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
     private let content = UIStackView()
     private let preview = UIImageView()
     private let nameField = UITextField()
-    private let iconButton = UIButton(type: .system)
+    private let iconField = UILabel()
+    private let browseButton = UIButton(type: .system)
     private let browser = UIStackView()
     private let searchField = UISearchTextField()
     private let images = UITableView(frame: .zero, style: .plain)
@@ -146,12 +147,31 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
     }
 
     private func buildIcon() {
-        iconButton.accessibilityLabel = "Choose project icon"
-        iconButton.accessibilityIdentifier = "project-icon-selector"
-        iconButton.contentHorizontalAlignment = .leading
-        iconButton.addTarget(self, action: #selector(toggleBrowser), for: .touchUpInside)
-        iconButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 50).isActive = true
-        let iconSection = section("Icon", body: iconButton)
+        iconField.font = Fonts.ui(.sans, 16)
+        iconField.textColor = Palette.text
+        iconField.lineBreakMode = .byTruncatingMiddle
+        iconField.translatesAutoresizingMaskIntoConstraints = false
+        let field = UIView()
+        field.backgroundColor = Palette.controlFill
+        field.layer.cornerRadius = 12
+        field.addSubview(iconField)
+        NSLayoutConstraint.activate([
+            field.heightAnchor.constraint(equalToConstant: 50),
+            iconField.leadingAnchor.constraint(equalTo: field.leadingAnchor, constant: 14),
+            iconField.trailingAnchor.constraint(equalTo: field.trailingAnchor, constant: -14),
+            iconField.centerYAnchor.constraint(equalTo: field.centerYAnchor),
+        ])
+        browseButton.accessibilityLabel = "Browse project images"
+        browseButton.accessibilityIdentifier = "project-icon-selector"
+        browseButton.addTarget(self, action: #selector(toggleBrowser), for: .touchUpInside)
+        NSLayoutConstraint.activate([
+            browseButton.widthAnchor.constraint(equalToConstant: 50),
+            browseButton.heightAnchor.constraint(equalToConstant: 50),
+        ])
+        let iconRow = UIStackView(arrangedSubviews: [field, browseButton])
+        iconRow.spacing = 8
+        iconRow.alignment = .center
+        let iconSection = section("Icon", body: iconRow)
         browser.axis = .vertical
         browser.spacing = 8
         browser.isHidden = true
@@ -230,16 +250,13 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
     private func refreshSelection() {
         let name = nameField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         preview.image = ProjectTile.image(name: name.isEmpty ? project.name : name, colorIndex: colorIndex, customColor: selectedColor, side: 48, artwork: artwork)
-        var config = UIButton.Configuration.filled()
-        config.title = selectedPath.map { ($0 as NSString).lastPathComponent } ?? "Automatic"
+        iconField.text = selectedPath.map { ($0 as NSString).lastPathComponent } ?? "Automatic"
+        var config = UIButton.Configuration.plain()
         config.image = UIImage(systemName: browser.isHidden ? "folder" : "folder.fill")
-        config.imagePlacement = .trailing
-        config.imagePadding = 12
         config.baseForegroundColor = Palette.text
-        config.baseBackgroundColor = Palette.controlFill
+        config.background.backgroundColor = browser.isHidden ? .clear : Palette.controlFill
         config.cornerStyle = .medium
-        config.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 14, bottom: 12, trailing: 14)
-        iconButton.configuration = config
+        browseButton.configuration = config
         for (index, button) in swatchButtons.enumerated() {
             let swatch = swatches[index]
             let chosen = swatch.colorIndex.map { Int($0) == selectedColorIndex && selectedColor == nil } ?? (swatch.color.caseInsensitiveCompare(selectedColor ?? "") == .orderedSame)
