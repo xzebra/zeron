@@ -476,7 +476,6 @@ mod tests {
             name: None,
             icon_path: None,
             color_index: None,
-            color: None,
             git_detected: true,
             git_checked_at: None,
             checkout_id: Some("checkout".into()),

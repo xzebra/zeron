@@ -13759,7 +13759,6 @@ name = "zeron-mobile"
 version = "0.2.124"
 dependencies = [
  "async-trait",
- "image",
  "resvg",
  "serde",
  "serde_json",
@@ -14038,6 +14037,7 @@ dependencies = [
  "wry",
  "x11rb 0.14.0",
  "zatex",
+ "zeron-client",
  "zeron-doc",
  "zeron-engine",
  "zeron-harness",

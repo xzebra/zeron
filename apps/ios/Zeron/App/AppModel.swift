@@ -83,11 +83,10 @@ final class AppModel {
         }
     }
 
-    /// `name: nil` keeps the current name; nil path/color mean automatic. A
-    /// custom `#rrggbb` color wins over `colorIndex`.
-    func editProject(_ id: String, name: String?, iconPath: String?, colorIndex: Int?, color: String? = nil) throws {
+    /// `name: nil` keeps the current name; a nil icon path means automatic.
+    func editProject(_ id: String, name: String?, iconPath: String?, colorIndex: Int) throws {
         guard let client else { throw CoreError.InvalidArgument(message: "Sign in to edit projects") }
-        try client.editProject(spaceId: id, name: name, iconPath: iconPath, colorIndex: colorIndex.map(UInt32.init), color: color)
+        try client.editProject(spaceId: id, name: name, iconPath: iconPath, colorIndex: UInt32(colorIndex))
         // Retrying Save also refreshes artwork replaced at the same path.
         projectIconTask?.cancel()
         projectIconTask = nil
@@ -549,7 +548,6 @@ final class AppModel {
             hasProject: r.project != nil,
             // Project-less sessions tone like the desktop's "home" tile.
             colorIndex: Int(r.project?.colorIndex ?? projectColorIndex(spacePath: "home")),
-            customColor: r.project?.color,
             harness: r.harness,
             branch: r.branch,
             pr: r.pullRequest.map { pr in
@@ -732,7 +730,7 @@ final class AppModel {
     @MainActor var projectOptions: [ProjectOption] {
         // A Cloud project runs only on Cloud: hidden when this account isn't
         // offered Cloud (or no longer is).
-        rawProjects.filter { !$0.isCloud || isDemo || cloud.available }.map { ProjectOption(id: $0.id, name: $0.name, path: $0.path, device: $0.deviceId, deviceName: $0.deviceName ?? deviceName($0.deviceId), online: $0.deviceOnline, git: $0.gitDetected, groupKey: $0.groupKey, groupName: $0.groupName, colorIndex: Int($0.colorIndex), isCloud: $0.isCloud, githubRepo: $0.githubRepo, iconPath: $0.iconPath, customColorIndex: $0.customColorIndex.map(Int.init), customColor: $0.color, iconData: projectArtwork[iconKey($0)]) }
+        rawProjects.filter { !$0.isCloud || isDemo || cloud.available }.map { ProjectOption(id: $0.id, name: $0.name, path: $0.path, device: $0.deviceId, deviceName: $0.deviceName ?? deviceName($0.deviceId), online: $0.deviceOnline, git: $0.gitDetected, groupKey: $0.groupKey, groupName: $0.groupName, colorIndex: Int($0.colorIndex), isCloud: $0.isCloud, githubRepo: $0.githubRepo, iconPath: $0.iconPath, iconData: projectArtwork[iconKey($0)]) }
     }
 
     var hostOptions: [HostOption] {

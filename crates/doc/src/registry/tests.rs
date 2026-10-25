@@ -288,7 +288,6 @@ fn space(id: &str, device_id: &str, path: &str) -> Space {
         name: None,
         icon_path: None,
         color_index: None,
-        color: None,
         git_detected: false,
         git_checked_at: None,
         checkout_id: None,
@@ -2394,16 +2393,14 @@ fn edit_project_syncs_artwork_and_name_across_checkouts() {
             "clone-b",
             Some(" My App "),
             Some(" apps/web/public/icon.png "),
-            Some(3),
-            None
-        )
+            Some(19))
         .unwrap()
     );
     for id in ["clone-a", "clone-b"] {
         let row = ws.space(id).unwrap().unwrap();
         assert_eq!(row.name.as_deref(), Some("My App"));
         assert_eq!(row.icon_path.as_deref(), Some("apps/web/public/icon.png"));
-        assert_eq!(row.color_index, Some(3));
+        assert_eq!(row.color_index, Some(19));
     }
     let other = ws.space("other").unwrap().unwrap();
     assert!(other.icon_path.is_none() && other.color_index.is_none());
@@ -2418,11 +2415,11 @@ fn edit_project_syncs_artwork_and_name_across_checkouts() {
         Some("apps/web/public/icon.png")
     );
     assert!(
-        ws.edit_project("clone-a", Some("Bad"), Some("../outside.png"), None, None)
+        ws.edit_project("clone-a", Some("Bad"), Some("../outside.png"), None)
             .is_err()
     );
     assert!(
-        ws.edit_project("clone-a", Some("Bad"), None, Some(8), None)
+        ws.edit_project("clone-a", Some("Bad"), None, Some(20))
             .is_err()
     );
     assert_eq!(
@@ -2445,14 +2442,14 @@ fn edit_project_syncs_artwork_and_name_across_checkouts() {
     );
     // No name leaves it alone; a blank one restores the basename.
     assert!(
-        ws.edit_project("clone-a", None, Some("logo.svg"), Some(1), None)
+        ws.edit_project("clone-a", None, Some("logo.svg"), Some(1))
             .unwrap()
     );
     let row = ws.space("clone-b").unwrap().unwrap();
     assert_eq!(row.name.as_deref(), Some("My App"));
     assert_eq!(row.icon_path.as_deref(), Some("logo.svg"));
     assert!(
-        ws.edit_project("clone-a", Some(" "), Some(" "), None, None)
+        ws.edit_project("clone-a", Some(" "), Some(" "), None)
             .unwrap()
     );
     for id in ["clone-a", "clone-b"] {
@@ -2461,45 +2458,5 @@ fn edit_project_syncs_artwork_and_name_across_checkouts() {
         assert!(row.icon_path.is_none());
         assert!(row.color_index.is_none());
     }
-    assert!(!ws.edit_project("missing", None, None, None, None).unwrap());
-}
-
-#[test]
-fn edit_project_saves_a_custom_color_with_its_nearest_legacy_slot() {
-    let mut ws = RegistryDoc::new("dev-a");
-    for (id, device) in [("clone-a", "dev-a"), ("clone-b", "dev-b")] {
-        let mut member = space(id, device, "/projects/repo");
-        member.repository_id = Some("commit:example".into());
-        ws.upsert_space(&member).unwrap();
-    }
-    // The custom color decides the slot older peers read.
-    assert!(
-        ws.edit_project("clone-a", None, None, Some(1), Some(" #EF4444 "))
-            .unwrap()
-    );
-    for id in ["clone-a", "clone-b"] {
-        let row = ws.space(id).unwrap().unwrap();
-        assert_eq!(row.color.as_deref(), Some("#ef4444"));
-        assert_eq!(row.color_index, Some(3));
-        assert_eq!(
-            zeron_proto::project_icon::project_color(&row),
-            zeron_proto::project_icon::ProjectColor::Custom(0xef4444)
-        );
-    }
-    let restored = RegistryDoc::from_bytes(&ws.to_bytes().unwrap(), "dev-a").unwrap();
-    assert_eq!(
-        restored.space("clone-b").unwrap().unwrap().color.as_deref(),
-        Some("#ef4444")
-    );
-    assert!(
-        ws.edit_project("clone-a", None, None, None, Some("#12345"))
-            .is_err()
-    );
-    // A palette slot clears the custom color.
-    assert!(
-        ws.edit_project("clone-b", None, None, Some(5), None)
-            .unwrap()
-    );
-    let row = ws.space("clone-a").unwrap().unwrap();
-    assert_eq!((row.color, row.color_index), (None, Some(5)));
+    assert!(!ws.edit_project("missing", None, None, None).unwrap());
 }

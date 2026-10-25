@@ -637,97 +637,14 @@ fn provider_switch_needs_a_host_that_switches() {
     client.set_session_config("chat-blog", &model).unwrap();
 }
 
-#[tokio::test]
-async fn project_artwork_uses_the_host_image_pipeline_after_editing() {
-    let (client, _dir) = demo(fast());
-    client
-        .edit_project(
-            "space-zeron",
-            None,
-            Some("apps/web/public/favicon.svg"),
-            Some(7),
-            Some("#ff5a1f"),
-        )
-        .unwrap();
-    let workspace = client.workspace();
-    for id in ["space-zeron", "space-zeron-vps"] {
-        let project = workspace
-            .projects
-            .iter()
-            .find(|project| project.id == id)
-            .unwrap();
-        assert_eq!(
-            project.icon_path.as_deref(),
-            Some("apps/web/public/favicon.svg")
-        );
-        assert_eq!(project.color.as_deref(), Some("#ff5a1f"));
-    }
-    let (mime, bytes) = client.project_icon("space-zeron").await.unwrap();
-    assert_eq!(mime, "image/svg+xml");
-    let svg = String::from_utf8(bytes).unwrap();
-    assert!(svg.contains("#668cf5"));
-    assert!(svg.contains("<path"));
-    client
-        .edit_project("space-zeron", None, Some("missing.svg"), None, None)
-        .unwrap();
-    assert!(client.project_icon("space-zeron").await.is_err());
-}
 
-#[tokio::test]
-async fn project_image_browsing_previews_without_changing_the_saved_icon() {
+#[test]
+fn an_icon_only_edit_refreshes_the_project_snapshot() {
     let (client, _dir) = demo(fast());
-    let before = client.workspace().projects.clone();
-    let paths = client.project_images("space-zeron", "").await.unwrap();
-    assert_eq!(
-        paths.first().map(String::as_str),
-        Some("public/favicon.svg")
-    );
-    assert_eq!(paths.len(), 5);
-    assert_eq!(
-        client.project_images("space-zeron", "logo").await.unwrap(),
-        ["assets/brand/logo.svg"]
-    );
-    let (mime, bytes) = client
-        .project_image("space-zeron", Some("assets/brand/logo.svg"))
-        .await
-        .unwrap();
-    assert_eq!(mime, "image/svg+xml");
-    assert!(String::from_utf8(bytes).unwrap().contains("#ff5a1f"));
-    assert_eq!(client.workspace().projects, before);
-    assert!(
-        client
-            .project_image("space-zeron", Some("../outside.svg"))
-            .await
-            .is_err()
-    );
-    assert!(client.project_images("missing", "").await.is_err());
-    assert!(
-        client
-            .project_images("space-zeron", "nothing-here")
-            .await
-            .unwrap()
-            .is_empty()
-    );
-    client
-        .edit_project(
-            "space-zeron",
-            None,
-            Some("assets/brand/logo.svg"),
-            None,
-            None,
-        )
-        .unwrap();
-    let (_, automatic) = client.project_image("space-zeron", None).await.unwrap();
-    assert!(String::from_utf8(automatic).unwrap().contains("#94a3b8"));
-    assert_eq!(
-        client
-            .workspace()
-            .projects
-            .iter()
-            .find(|project| project.id == "space-zeron")
-            .unwrap()
-            .icon_path
-            .as_deref(),
-        Some("assets/brand/logo.svg")
-    );
+    client.edit_project("space-zeron", None, Some("assets/icon.svg"), None).unwrap();
+    let workspace = client.workspace();
+    for project in workspace.projects.iter().filter(|project| project.group_name == "zeron") {
+        assert_eq!(project.icon_path.as_deref(), Some("assets/icon.svg"));
+    }
+    assert_eq!(workspace.projects.iter().find(|project| project.id == "space-zeron").unwrap().icon_path.as_deref(), Some("assets/icon.svg"));
 }

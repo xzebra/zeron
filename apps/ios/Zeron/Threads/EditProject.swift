@@ -27,13 +27,9 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
     private let searchField = UISearchTextField()
     private let images = UITableView(frame: .zero, style: .plain)
     private let statusLabel = UILabel()
-    private let hexField = UITextField()
-    private let colorWell = UIColorWell()
-    private let automaticColor = UIButton(type: .system)
     private var swatchButtons: [UIButton] = []
     private var selectedPath: String?
-    private var selectedColorIndex: Int?
-    private var selectedColor: String?
+    private var selectedColorIndex: Int
     private var artwork: Data?
     private var automaticArtwork: Data?
     private var paths: [String] = []
@@ -43,15 +39,12 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
     private var thumbnailTasks: [String: Task<Void, Never>] = [:]
     private var searchGeneration = UUID()
     private var previewGeneration = UUID()
-    private let swatches = projectColorSwatches()
-    private var colorIndex: Int { selectedColorIndex ?? Int(projectColorIndex(spacePath: project.path)) }
 
     init(project: ProjectOption, app: AppModel) {
         self.project = project
         self.app = app
         selectedPath = project.iconPath
-        selectedColorIndex = project.customColorIndex
-        selectedColor = project.customColor
+        selectedColorIndex = project.colorIndex
         artwork = project.iconData
         automaticArtwork = project.iconPath == nil ? project.iconData : nil
         super.init(nibName: nil, bundle: nil)
@@ -199,23 +192,18 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
     }
 
     private func buildColors() {
-        let heading = UIStackView(arrangedSubviews: [label("Color"), UIView(), automaticColor])
-        heading.alignment = .center
-        automaticColor.setTitle("Automatic", for: .normal)
-        automaticColor.titleLabel?.font = Fonts.ui(.sans, 13)
-        automaticColor.accessibilityLabel = "Automatic project color"
-        automaticColor.addTarget(self, action: #selector(useAutomaticColor), for: .touchUpInside)
-        let colors = UIStackView(arrangedSubviews: [heading])
+        let colors = UIStackView(arrangedSubviews: [label("Color")])
         colors.axis = .vertical
         colors.spacing = 10
-        for start in stride(from: 0, to: swatches.count, by: 5) {
+        let names = ["Slate", "Blue", "Violet", "Rose", "Amber", "Emerald", "Teal", "Orange", "Stone", "Red", "Pink", "Fuchsia", "Purple", "Indigo", "Sky", "Cyan", "Green", "Lime", "Yellow", "Clay"]
+        for start in stride(from: 0, to: Palette.projectDots.count, by: 5) {
             let row = UIStackView()
             row.distribution = .fillEqually
             row.spacing = 12
-            for index in start..<min(start + 5, swatches.count) {
+            for index in start..<min(start + 5, Palette.projectDots.count) {
                 let button = UIButton(type: .custom)
                 button.tag = index
-                button.accessibilityLabel = "Color \(swatches[index].color.uppercased())"
+                button.accessibilityLabel = names[index]
                 button.accessibilityIdentifier = "project-color-\(index)"
                 button.heightAnchor.constraint(equalToConstant: 42).isActive = true
                 button.layer.cornerRadius = 12
@@ -225,31 +213,12 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
             }
             colors.addArrangedSubview(row)
         }
-        hexField.text = selectedColor?.uppercased()
-        hexField.placeholder = "#RRGGBB"
-        hexField.accessibilityLabel = "Custom color"
-        hexField.autocorrectionType = .no
-        hexField.autocapitalizationType = .allCharacters
-        hexField.font = Fonts.ui(.monoMedium, 16)
-        hexField.textColor = Palette.text
-        hexField.returnKeyType = .done
-        hexField.delegate = self
-        hexField.addTarget(self, action: #selector(hexChanged), for: .editingChanged)
-        colorWell.supportsAlpha = false
-        colorWell.title = "Project Color"
-        colorWell.accessibilityLabel = "Choose custom color"
-        colorWell.addTarget(self, action: #selector(colorWellChanged), for: .valueChanged)
-        let custom = UIStackView(arrangedSubviews: [hexField, colorWell])
-        custom.spacing = 12
-        custom.alignment = .center
-        custom.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
-        colors.addArrangedSubview(custom)
         content.addArrangedSubview(colors)
     }
 
     private func refreshSelection() {
         let name = nameField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        preview.image = ProjectTile.image(name: name.isEmpty ? project.name : name, colorIndex: colorIndex, customColor: selectedColor, side: 48, artwork: artwork)
+        preview.image = ProjectTile.image(name: name.isEmpty ? project.name : name, colorIndex: selectedColorIndex, side: 48, artwork: artwork)
         iconField.text = selectedPath.map { ($0 as NSString).lastPathComponent } ?? "Automatic"
         var config = UIButton.Configuration.plain()
         config.image = UIImage(systemName: browser.isHidden ? "folder" : "folder.fill")
@@ -258,25 +227,14 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
         config.cornerStyle = .medium
         browseButton.configuration = config
         for (index, button) in swatchButtons.enumerated() {
-            let swatch = swatches[index]
-            let chosen = swatch.colorIndex.map { Int($0) == selectedColorIndex && selectedColor == nil } ?? (swatch.color.caseInsensitiveCompare(selectedColor ?? "") == .orderedSame)
-            button.backgroundColor = ProjectTile.tone(colorIndex: swatch.colorIndex.map(Int.init) ?? project.colorIndex, customColor: swatch.colorIndex == nil ? swatch.color : nil)
+            let chosen = index == selectedColorIndex
+            button.backgroundColor = ProjectTile.tone(colorIndex: index)
             button.setImage(chosen ? UIImage(systemName: "checkmark") : nil, for: .normal)
             button.tintColor = Palette.text
             button.layer.borderWidth = chosen ? 2 : 0
             button.layer.borderColor = Palette.accent.cgColor
             button.accessibilityTraits = chosen ? [.button, .selected] : .button
         }
-        automaticColor.tintColor = selectedColorIndex == nil && selectedColor == nil ? Palette.accent : Palette.secondary
-        colorWell.selectedColor = UIColor(hex: UInt32((selectedColor ?? "#8B7CF6").dropFirst(), radix: 16) ?? 0x8B7CF6)
-        navigationItem.rightBarButtonItem?.isEnabled = hexField.text?.isEmpty != false || normalizedHex(hexField.text) != nil
-    }
-
-    private func normalizedHex(_ text: String?) -> String? {
-        let value = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let digits = value.hasPrefix("#") ? String(value.dropFirst()) : value
-        guard digits.count == 6, digits.allSatisfy({ $0.isASCII && $0.isHexDigit }), UInt32(digits, radix: 16) != nil else { return nil }
-        return "#" + digits.lowercased()
     }
 
     @objc private func nameChanged() { refreshSelection() }
@@ -329,7 +287,7 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
         let path = indexPath.row == 0 ? nil : paths[indexPath.row - 1]
         cell.textLabel?.text = path.map { ($0 as NSString).lastPathComponent } ?? "Automatic"
         cell.detailTextLabel?.text = path.map { ($0 as NSString).deletingLastPathComponent }
-        cell.imageView?.image = path.flatMap { thumbnails[$0] } ?? ProjectTile.image(name: nameField.text ?? project.groupName, colorIndex: colorIndex, customColor: selectedColor, side: 30, artwork: path == nil ? automaticArtwork : nil)
+        cell.imageView?.image = path.flatMap { thumbnails[$0] } ?? ProjectTile.image(name: nameField.text ?? project.groupName, colorIndex: selectedColorIndex, side: 30, artwork: path == nil ? automaticArtwork : nil)
         cell.accessoryType = path == selectedPath ? .checkmark : .none
         cell.tintColor = Palette.accent
         cell.accessibilityIdentifier = path.map { "project-image:\($0)" } ?? "project-image-automatic"
@@ -385,38 +343,7 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
     }
 
     @objc private func pickSwatch(_ button: UIButton) {
-        let swatch = swatches[button.tag]
-        selectedColorIndex = swatch.colorIndex.map(Int.init)
-        selectedColor = swatch.colorIndex == nil ? swatch.color : nil
-        hexField.text = selectedColor?.uppercased()
-        refreshSelection()
-    }
-
-    @objc private func useAutomaticColor() {
-        selectedColorIndex = nil
-        selectedColor = nil
-        hexField.text = nil
-        refreshSelection()
-    }
-
-    @objc private func hexChanged() {
-        if let color = normalizedHex(hexField.text) {
-            selectedColor = color
-            selectedColorIndex = nil
-        } else if hexField.text?.isEmpty != false {
-            selectedColor = nil
-            selectedColorIndex = nil
-        }
-        refreshSelection()
-    }
-
-    @objc private func colorWellChanged() {
-        guard let color = colorWell.selectedColor else { return }
-        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
-        guard color.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else { return }
-        selectedColor = String(format: "#%02x%02x%02x", Int((red * 255).rounded()), Int((green * 255).rounded()), Int((blue * 255).rounded()))
-        selectedColorIndex = nil
-        hexField.text = selectedColor?.uppercased()
+        selectedColorIndex = button.tag
         refreshSelection()
     }
 
@@ -436,7 +363,7 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
         view.endEditing(true)
         let name = (nameField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            try app.editProject(project.id, name: name == project.groupName ? nil : name, iconPath: selectedPath, colorIndex: selectedColorIndex, color: selectedColor)
+            try app.editProject(project.id, name: name == project.groupName ? nil : name, iconPath: selectedPath, colorIndex: selectedColorIndex)
             dismiss(animated: true)
         } catch {
             showError(error.localizedDescription)

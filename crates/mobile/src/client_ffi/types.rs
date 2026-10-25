@@ -461,15 +461,6 @@ pub struct ProjectRef {
     pub name: String,
     /// Stable palette slot (0..PROJECT_COLOR_COUNT).
     pub color_index: u32,
-    /// Custom `#rrggbb` color; wins over `color_index` when present.
-    pub color: Option<String>,
-}
-
-/// One option in the shared desktop/native project color palette.
-#[derive(Debug, Clone, uniffi::Record)]
-pub struct ProjectColorSwatch {
-    pub color: String,
-    pub color_index: Option<u32>,
 }
 
 /// One session row, as every list renders it.
@@ -532,7 +523,6 @@ impl From<&zc::SessionRow> for SessionRow {
                 id: p.id.clone(),
                 name: p.name.clone(),
                 color_index: p.color_index,
-                color: p.color.clone(),
             }),
             device_id: r.device_id.clone(),
             device_name: r.device_name.clone(),
@@ -610,9 +600,6 @@ impl From<&zc::FrontPage> for FrontPage {
 pub struct ProjectView {
     pub id: String,
     pub icon_path: Option<String>,
-    pub custom_color_index: Option<u32>,
-    /// Custom `#rrggbb` color; wins over `color_index` when present.
-    pub color: Option<String>,
     pub name: String,
     pub path: String,
     pub color_index: u32,
@@ -640,8 +627,6 @@ impl From<&zc::ProjectView> for ProjectView {
     fn from(p: &zc::ProjectView) -> Self {
         Self {
             icon_path: p.icon_path.clone(),
-            custom_color_index: p.custom_color_index,
-            color: p.color.clone(),
             id: p.id.clone(),
             name: p.name.clone(),
             path: p.path.clone(),

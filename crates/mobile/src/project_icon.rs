@@ -1,5 +1,4 @@
 //! Small, static project thumbnails for native image views.
-use std::io::Cursor;
 
 pub(crate) fn thumbnail(mime: &str, bytes: Vec<u8>) -> Result<Vec<u8>, String> {
     if bytes.len() > zeron_proto::MAX_WORKSPACE_IMAGE_BYTES {
@@ -31,23 +30,7 @@ pub(crate) fn thumbnail(mime: &str, bytes: Vec<u8>) -> Result<Vec<u8>, String> {
             .encode_png()
             .map_err(|_| "Could not encode icon".into());
     }
-    let mut reader = image::ImageReader::new(Cursor::new(bytes))
-        .with_guessed_format()
-        .map_err(|_| "Invalid icon")?;
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(4096);
-    limits.max_image_height = Some(4096);
-    limits.max_alloc = Some(64 * 1024 * 1024);
-    reader.limits(limits);
-    let image = reader
-        .decode()
-        .map_err(|_| "Invalid icon")?
-        .thumbnail(64, 64);
-    let mut png = Cursor::new(Vec::new());
-    image
-        .write_to(&mut png, image::ImageFormat::Png)
-        .map_err(|_| "Could not encode icon")?;
-    Ok(png.into_inner())
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -56,7 +39,8 @@ mod tests {
     #[test]
     fn svg_becomes_a_bounded_png() {
         let bytes = thumbnail("image/svg+xml", br##"<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="500"><rect width="1000" height="500" fill="#f00"/></svg>"##.to_vec()).unwrap();
-        let image = image::load_from_memory(&bytes).unwrap();
-        assert_eq!((image.width(), image.height()), (64, 32));
+        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+        assert_eq!(u32::from_be_bytes(bytes[16..20].try_into().unwrap()), 64);
+        assert_eq!(u32::from_be_bytes(bytes[20..24].try_into().unwrap()), 32);
     }
 }

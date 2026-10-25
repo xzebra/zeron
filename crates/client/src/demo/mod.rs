@@ -11,7 +11,6 @@
 
 mod fixtures;
 mod png;
-mod project_artwork;
 mod terminal;
 mod transcripts;
 mod visuals;
@@ -786,9 +785,6 @@ impl DemoHost {
             return Err(ClientError::HostUnavailable(device_id.to_owned()));
         }
         tokio::time::sleep(Duration::from_millis(80)).await;
-        if let Some(reply) = project_artwork::rpc(&client, device_id, method, &params)? {
-            return Ok(reply);
-        }
         if let Some(reply) = self.companion_rpc(&client, method, &params)? {
             return Ok(reply);
         }

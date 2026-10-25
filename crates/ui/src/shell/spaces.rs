@@ -17,7 +17,6 @@ use crate::pickers::{
 };
 use gpui::{FocusHandle, Window};
 use std::collections::{HashMap, HashSet};
-use zeron_proto::project_icon::ProjectColor;
 use zeron_proto::{
     ChatIndicator, Device, DriveEntry, DriveListing, FolderListing, HomeFolderMatch,
     HomeFolderSearchResult, SearchHomeFoldersRequest, Space,
@@ -1354,7 +1353,10 @@ mod pinned_session_tests {
             // The globe/archive slot is always reserved, so hovering swaps its
             // glyph in place: the title keeps its width and the status and time
             // columns never move.
-            assert_eq!(cx.debug_bounds("chat-title-older").unwrap().size.width, title.size.width);
+            assert_eq!(
+                cx.debug_bounds("chat-title-older").unwrap().size.width,
+                title.size.width
+            );
             assert_eq!(cx.debug_bounds("chat-status-older").unwrap(), status);
             assert_eq!(cx.debug_bounds("chat-time-older").unwrap(), time);
         }
@@ -2646,7 +2648,10 @@ fn git_url(query: &str) -> Option<String> {
     } else {
         return None;
     };
-    let mut parts = path.trim_matches('/').split('/').filter(|part| !part.is_empty());
+    let mut parts = path
+        .trim_matches('/')
+        .split('/')
+        .filter(|part| !part.is_empty());
     (parts.next().is_some() && parts.next().is_some()).then(|| query.to_owned())
 }
 
@@ -2911,31 +2916,27 @@ fn tilde_path(path: &str, home: Option<&str>) -> String {
 pub(super) struct EditProjectDialog {
     pub space_id: String,
     pub input: Entity<ComposerInput>,
-    pub icon_input: Entity<ComposerInput>,
-    /// `#RRGGBB`; a valid entry selects it as the custom color.
-    pub hex_input: Entity<ComposerInput>,
+    pub icon_path: Option<String>,
     /// Chosen monogram color; `None` keeps the path-derived one.
-    pub color: Option<ProjectColor>,
+    pub color: Option<u32>,
     pub derived_color: u32,
     /// The name shown on open; leaving it untouched keeps the stored name.
     pub original_name: String,
     /// Where artwork is read and browsed: this device's checkout, else the
     /// representative's on its host.
     pub artwork: FilesRequestContext,
-    /// This device's checkout of the project, for choosing artwork from disk.
-    pub local_root: Option<std::path::PathBuf>,
     /// The live tile preview and the icon path it loaded.
     pub preview: Option<(Option<String>, Entity<super::project_icon::ProjectIcon>)>,
     pub browser: Option<IconBrowser>,
     pub error: Option<String>,
     pub focus_pending: bool,
-    pub _events: Vec<Subscription>,
+    pub _events: Subscription,
 }
 
 /// The Edit Project dialog's searchable list of the checkout's images.
 pub(super) struct IconBrowser {
     pub filter: Entity<ComposerInput>,
-    /// Ranked checkout-relative paths; `None` while searching.
+    /// Search results in host order; `None` while searching.
     pub results: Option<Result<Vec<String>, String>>,
     pub active: usize,
     pub scroll: gpui::UniformListScrollHandle,
@@ -2944,10 +2945,6 @@ pub(super) struct IconBrowser {
     pub _search: Option<Task<()>>,
     pub _events: Subscription,
 }
-
-/// The dialog's swatches, in hue order: legacy slots stay plain slots for
-/// older peers; the others are saved as custom colors.
-const EDIT_PROJECT_SWATCHES: [ProjectColor; 20] = zeron_proto::project_icon::SWATCHES;
 
 /// Rows the icon browser shows before scrolling.
 const ICON_BROWSER_ROWS: usize = 6;
@@ -3704,7 +3701,10 @@ impl Shell {
                     index -= 1;
                 }
                 let shown: Vec<&String> = shown.into_iter().filter(|m| *m != chat).collect();
-                let after = index.checked_sub(1).and_then(|i| shown.get(i)).map(|m| (*m).clone());
+                let after = index
+                    .checked_sub(1)
+                    .and_then(|i| shown.get(i))
+                    .map(|m| (*m).clone());
                 let before = shown.get(index).map(|m| (*m).clone());
                 if after.is_none() && before.is_none() {
                     (others.last().cloned(), None)
@@ -3960,7 +3960,12 @@ impl Shell {
         let projects = state.projects();
         let names: Vec<String> = projects
             .iter()
-            .map(|members| state.representative_space(members[0]).display_name().to_string())
+            .map(|members| {
+                state
+                    .representative_space(members[0])
+                    .display_name()
+                    .to_string()
+            })
             .collect();
         let mut rows: Vec<SpacesMenuRow> = Vec::new();
         if query.trim().is_empty() {
@@ -5275,7 +5280,11 @@ impl Shell {
             (active, archived)
         };
         if active.is_none() && archived.is_none() {
-            self.show_notice(crate::toast::ToastKind::Error, "Clear the project filter to rename this session", cx);
+            self.show_notice(
+                crate::toast::ToastKind::Error,
+                "Clear the project filter to rename this session",
+                cx,
+            );
             return false;
         }
         if let Some(chat) = &active {
@@ -5521,12 +5530,7 @@ impl Shell {
         }
         // Sections keep their placed order, as Pinned does, not activity order.
         for ((_, rows), section) in custom_groups.iter_mut().zip(&custom_sections) {
-            rows.sort_by_key(|row| {
-                section
-                    .session_ids
-                    .iter()
-                    .position(|id| id == &row.chat.id)
-            });
+            rows.sort_by_key(|row| section.session_ids.iter().position(|id| id == &row.chat.id));
         }
         if self.settings.sidebar_organization == SidebarOrganization::ByDevice {
             let local_device_id = self.state.read(cx).local_device_id.clone();
@@ -5915,7 +5919,9 @@ impl Shell {
                         .spaces
                         .iter()
                         .find(|space| zeron_proto::view::project_key(space) == key)
-                        .and_then(|space| state.project_members(space).first().map(|m| m.id.clone()))
+                        .and_then(|space| {
+                            state.project_members(space).first().map(|m| m.id.clone())
+                        })
                 })
                 .flatten();
             let new_chat_button = group_space.clone().map(|project| {
@@ -5949,41 +5955,30 @@ impl Shell {
                     )
                     .into_any_element()
             });
-            let header =
-                sidebar_disclosure_header(
-                    theme,
-                    group_icon,
-                    visible_label,
-                    collapsed.then_some(row_count),
-                    new_chat_button,
-                    chevron,
-                )
-                    .group(group_name)
-                .id(SharedString::from(format!("sidebar-group-{collapse_key}")))
-                .when_some(group_space, |el, space_id| {
-                    el.on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                            cx.stop_propagation();
-                            this.space_menu.open((space_id.clone(), event.position));
-                            cx.notify();
-                        }),
-                    )
-                })
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    let was_open = !this.sidebar_collapsed_groups.contains(&toggle_key);
-                    this.begin_sidebar_disclosure_motion(
-                        &toggle_motion_key,
-                        if was_open { body_height } else { 0.0 },
-                        if was_open { 0.0 } else { body_height },
-                    );
-                    if was_open {
-                        this.sidebar_collapsed_groups.insert(toggle_key.clone());
-                    } else {
-                        this.sidebar_collapsed_groups.remove(&toggle_key);
-                    }
-                    cx.notify();
-                }));
+            let header = sidebar_disclosure_header(
+                theme,
+                group_icon,
+                visible_label,
+                collapsed.then_some(row_count),
+                new_chat_button,
+                chevron,
+            )
+            .group(group_name)
+            .id(SharedString::from(format!("sidebar-group-{collapse_key}")))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                let was_open = !this.sidebar_collapsed_groups.contains(&toggle_key);
+                this.begin_sidebar_disclosure_motion(
+                    &toggle_motion_key,
+                    if was_open { body_height } else { 0.0 },
+                    if was_open { 0.0 } else { body_height },
+                );
+                if was_open {
+                    this.sidebar_collapsed_groups.insert(toggle_key.clone());
+                } else {
+                    this.sidebar_collapsed_groups.remove(&toggle_key);
+                }
+                cx.notify();
+            }));
             let body = self.render_sidebar_disclosure_body(
                 &motion_key,
                 !collapsed,
@@ -6108,44 +6103,44 @@ impl Shell {
             None,
             chevron,
         )
-            .id("sessions-toggle")
-            .debug_selector(|| "sessions-toggle".into())
-            .on_drag_move::<SidebarSessionDrag>(cx.listener(
-                |this, event: &gpui::DragMoveEvent<SidebarSessionDrag>, _, _| {
-                    if event.bounds.contains(&event.event.position) {
-                        let top = f32::from(
-                            event.bounds.bottom()
-                                - this.sidebar_scroll.bounds().top()
-                                - this.sidebar_scroll.offset().y,
-                        ) + SIDEBAR_DISCLOSURE_BODY_INSET;
-                        if let Some(drag) = this.sidebar_session_transfer.as_mut() {
-                            drag.preview = Some(SidebarSessionGap {
-                                group: "regular".into(),
-                                index: 0,
-                                pinned: false,
-                                top,
-                            });
-                        }
+        .id("sessions-toggle")
+        .debug_selector(|| "sessions-toggle".into())
+        .on_drag_move::<SidebarSessionDrag>(cx.listener(
+            |this, event: &gpui::DragMoveEvent<SidebarSessionDrag>, _, _| {
+                if event.bounds.contains(&event.event.position) {
+                    let top = f32::from(
+                        event.bounds.bottom()
+                            - this.sidebar_scroll.bounds().top()
+                            - this.sidebar_scroll.offset().y,
+                    ) + SIDEBAR_DISCLOSURE_BODY_INSET;
+                    if let Some(drag) = this.sidebar_session_transfer.as_mut() {
+                        drag.preview = Some(SidebarSessionGap {
+                            group: "regular".into(),
+                            index: 0,
+                            pinned: false,
+                            top,
+                        });
                     }
-                },
-            ))
-            .on_drop::<SidebarSessionDrag>(cx.listener(|this, payload, _, cx| {
-                this.finish_sidebar_session_transfer(payload, SidebarSessionDrop::Regular, cx);
-            }))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.cancel_sidebar_session_transfer(cx);
-                let was_open = this.sessions_open;
-                this.begin_sidebar_disclosure_motion(
-                    "sessions",
-                    if was_open { body_height } else { 0.0 },
-                    if was_open { 0.0 } else { body_height },
-                );
-                this.sessions_open = !was_open;
-                this.sidebar_prev_order.clear();
-                this.sidebar_resort.clear();
-                this.sidebar_new_keys.clear();
-                cx.notify();
-            }));
+                }
+            },
+        ))
+        .on_drop::<SidebarSessionDrag>(cx.listener(|this, payload, _, cx| {
+            this.finish_sidebar_session_transfer(payload, SidebarSessionDrop::Regular, cx);
+        }))
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.cancel_sidebar_session_transfer(cx);
+            let was_open = this.sessions_open;
+            this.begin_sidebar_disclosure_motion(
+                "sessions",
+                if was_open { body_height } else { 0.0 },
+                if was_open { 0.0 } else { body_height },
+            );
+            this.sessions_open = !was_open;
+            this.sidebar_prev_order.clear();
+            this.sidebar_resort.clear();
+            this.sidebar_new_keys.clear();
+            cx.notify();
+        }));
         let content = div()
             .pt(px(SIDEBAR_DISCLOSURE_BODY_INSET))
             .child(content)
@@ -6251,19 +6246,19 @@ impl Shell {
             None,
             chevron,
         )
-            .id("archived-toggle")
-            .debug_selector(|| "archived-toggle".into())
-            .on_click(cx.listener(move |this, _, _, cx| {
-                let was_open = this.archived_open;
-                this.begin_sidebar_disclosure_motion(
-                    "archived",
-                    if was_open { body_height } else { 0.0 },
-                    if was_open { 0.0 } else { body_height },
-                );
-                this.archived_open = !was_open;
-                this.archived_shown = INITIAL;
-                cx.notify();
-            }));
+        .id("archived-toggle")
+        .debug_selector(|| "archived-toggle".into())
+        .on_click(cx.listener(move |this, _, _, cx| {
+            let was_open = this.archived_open;
+            this.begin_sidebar_disclosure_motion(
+                "archived",
+                if was_open { body_height } else { 0.0 },
+                if was_open { 0.0 } else { body_height },
+            );
+            this.archived_open = !was_open;
+            this.archived_shown = INITIAL;
+            cx.notify();
+        }));
         let section = div().flex().flex_col().child(header);
         let body = {
             let selected = self.state.read(cx).selected_chat.clone();
@@ -6820,9 +6815,7 @@ impl Shell {
         // Otherwise the user's GitHub repositories matching a name-like query
         // follow the folders (what Cloud reaches; GitHub connected).
         let needle = query.to_lowercase();
-        let github: Vec<FolderRow> = if needle.is_empty()
-            || needle.starts_with(['/', '~', '.'])
-        {
+        let github: Vec<FolderRow> = if needle.is_empty() || needle.starts_with(['/', '~', '.']) {
             Vec::new()
         } else {
             let mut repos: Vec<&zeron_proto::GithubRepo> = self
@@ -7170,7 +7163,6 @@ impl Shell {
             name: None,
             icon_path: None,
             color_index: None,
-            color: None,
             git_detected,
             git_checked_at: None,
             checkout_id: None,
@@ -8833,29 +8825,10 @@ impl Shell {
         let representative = state.representative_space(space);
         let current = representative.display_name().to_string();
         let original_name = current.clone();
-        let current_icon = representative.icon_path.clone().unwrap_or_default();
-        let color = match zeron_proto::project_icon::project_color(representative) {
-            ProjectColor::Palette(_) => representative.color_index.map(ProjectColor::Palette),
-            custom => Some(custom),
-        };
-        // A custom color that isn't one of the swatches shows its hex.
-        let current_hex = match color {
-            Some(custom @ ProjectColor::Custom(rgb))
-                if !EDIT_PROJECT_SWATCHES.contains(&custom) =>
-            {
-                zeron_proto::project_icon::format_color(rgb)
-            }
-            _ => String::new(),
-        };
+        let icon_path = representative.icon_path.clone();
+        let color = representative.color_index;
         let derived_color = zeron_proto::project_icon::path_color_index(&representative.path);
         let artwork = super::project_icon::artwork_context(state, space);
-        let local_root = state
-            .project_members(space)
-            .into_iter()
-            .find(|member| state.local_device_id.as_deref() == Some(&member.device_id))
-            .and_then(|member| {
-                super::project_icon::checkout_root(std::path::Path::new(&member.path))
-            });
         let field = |placeholder, cx: &mut Context<ComposerInput>| {
             ComposerInput::new(placeholder, cx)
                 .with_single_line()
@@ -8863,10 +8836,6 @@ impl Shell {
                 .with_tab_stop()
                 .with_accessibility_role(gpui::Role::TextInput)
         };
-        let icon_input = cx.new(|cx| field("Automatic", cx));
-        icon_input.update(cx, |input, cx| input.set_text(current_icon, cx));
-        let hex_input = cx.new(|cx| field("#RRGGBB", cx));
-        hex_input.update(cx, |input, cx| input.set_text(current_hex, cx));
         let input = cx.new(|cx| field("Project name", cx));
         input.update(cx, |input, cx| input.set_text(current, cx));
         let submit_or_redraw =
@@ -8881,39 +8850,19 @@ impl Shell {
         let events = cx.subscribe(&input, move |this, _, event, cx| {
             submit_or_redraw(this, event, cx)
         });
-        let icon_events = cx.subscribe(&icon_input, move |this, _, event, cx| {
-            submit_or_redraw(this, event, cx)
-        });
-        let hex_events = cx.subscribe(
-            &hex_input,
-            |this: &mut Shell, input, event, cx| match event {
-                ComposerInputEvent::Submitted => this.submit_edit_project(cx),
-                ComposerInputEvent::Edited => {
-                    let rgb = zeron_proto::project_icon::parse_color(input.read(cx).text());
-                    if let (Some(rgb), Some(dialog)) = (rgb, this.edit_project_dialog.as_mut()) {
-                        dialog.color = Some(ProjectColor::Custom(rgb));
-                        dialog.error = None;
-                    }
-                    cx.notify();
-                }
-                _ => {}
-            },
-        );
         self.edit_project_dialog = Some(EditProjectDialog {
             space_id,
             input,
-            icon_input,
-            hex_input,
+            icon_path,
             color,
             derived_color,
             original_name,
             artwork,
-            local_root,
             preview: None,
             browser: None,
             error: None,
             focus_pending: true,
-            _events: vec![events, icon_events, hex_events],
+            _events: events,
         });
         cx.notify();
     }
@@ -8974,33 +8923,22 @@ impl Shell {
                 .timer(Duration::from_millis(120))
                 .await;
             let client = WorkspaceFilesClient::new(engine, context.clone());
-            let mut paths = Vec::new();
-            let mut failure = None;
-            for query in zeron_proto::project_icon::browse_queries(&filter) {
-                match client
-                    .search(zeron_proto::SearchWorkspaceFilesRequest {
-                        target: context.target.clone(),
-                        query,
-                        include_ignored: false,
-                        limit: None,
-                    })
-                    .await
-                {
-                    Ok(found) => paths.extend(
-                        found
-                            .into_iter()
-                            .filter(|found| found.kind == zeron_proto::WorkspaceEntryKind::File)
-                            .map(|found| found.path),
-                    ),
-                    Err(error) => failure = Some(error.to_string()),
-                }
-            }
-            let results = match failure {
-                Some(error) if paths.is_empty() => Err(error),
-                _ => Ok(zeron_proto::project_icon::rank_browse_results(
-                    &filter, paths,
-                )),
-            };
+            let results = client
+                .search(zeron_proto::SearchWorkspaceFilesRequest {
+                    target: context.target.clone(),
+                    query: zeron_proto::project_icon::browse_query(&filter),
+                    include_ignored: false,
+                    limit: Some(200),
+                })
+                .await
+                .map(|found| {
+                    found
+                        .into_iter()
+                        .filter(|file| file.kind == zeron_proto::WorkspaceEntryKind::File)
+                        .map(|file| file.path)
+                        .collect()
+                })
+                .map_err(|error| error.to_string());
             let _ = this.update(cx, |this, cx| {
                 if let Some(browser) = this
                     .edit_project_dialog
@@ -9032,9 +8970,7 @@ impl Shell {
         };
         dialog.browser = None;
         dialog.error = None;
-        dialog
-            .icon_input
-            .update(cx, |input, cx| input.set_text(path, cx));
+        dialog.icon_path = Some(path);
         cx.notify();
     }
 
@@ -9057,78 +8993,14 @@ impl Shell {
         cx.notify();
     }
 
-    /// Pick artwork from this device's checkout; stored relative to its root
-    /// so every checkout of the project resolves the same file.
-    fn choose_project_icon(&mut self, cx: &mut Context<Self>) {
-        let Some(root) = self
-            .edit_project_dialog
-            .as_ref()
-            .and_then(|dialog| dialog.local_root.clone())
-        else {
-            return;
-        };
-        let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("Choose Icon".into()),
-        });
-        cx.spawn(async move |this, cx| {
-            let Ok(Ok(Some(mut paths))) = receiver.await else {
-                return;
-            };
-            let Some(path) = paths.pop() else {
-                return;
-            };
-            let relative = path
-                .canonicalize()
-                .ok()
-                .and_then(|path| {
-                    path.strip_prefix(&root).ok().map(|relative| {
-                        relative
-                            .components()
-                            .map(|part| part.as_os_str().to_string_lossy())
-                            .collect::<Vec<_>>()
-                            .join("/")
-                    })
-                })
-                .ok_or("Choose an image inside the project")
-                .and_then(|relative| {
-                    zeron_proto::project_icon::normalize_path(Some(&relative))?
-                        .ok_or("Choose an image inside the project")
-                });
-            let _ = this.update(cx, |this, cx| {
-                let Some(dialog) = this.edit_project_dialog.as_mut() else {
-                    return;
-                };
-                match relative {
-                    Ok(relative) => {
-                        dialog.error = None;
-                        dialog.browser = None;
-                        dialog
-                            .icon_input
-                            .update(cx, |input, cx| input.set_text(relative, cx));
-                    }
-                    Err(message) => dialog.error = Some(message.into()),
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
     pub(super) fn submit_edit_project(&mut self, cx: &mut Context<Self>) {
         let Some(dialog) = self.edit_project_dialog.as_mut() else {
             return;
         };
-        let icon_path =
-            zeron_proto::project_icon::normalize_path(Some(dialog.icon_input.read(cx).text()));
-        // A typed hex that never parsed must not be dropped silently.
-        let hex =
-            zeron_proto::project_icon::normalize_color(Some(dialog.hex_input.read(cx).text()));
-        let icon_path = match (icon_path, hex) {
-            (Ok(path), Ok(_)) => path,
-            (Err(message), _) | (_, Err(message)) => {
+        let icon_path = match zeron_proto::project_icon::normalize_path(dialog.icon_path.as_deref())
+        {
+            Ok(path) => path,
+            Err(message) => {
                 dialog.error = Some(message.into());
                 cx.notify();
                 return;
@@ -9140,23 +9012,13 @@ impl Shell {
         // Untouched: keep the stored name; blank: restore the folder name.
         let name = dialog.input.read(cx).text().trim().to_string();
         let name = (name != dialog.original_name).then_some(name);
-        // Custom colors carry their nearest legacy slot for older peers.
-        let (color_index, color) = match dialog.color {
-            None => (None, None),
-            Some(ProjectColor::Palette(index)) => (Some(index), None),
-            Some(ProjectColor::Custom(rgb)) => (
-                Some(zeron_proto::project_icon::nearest_index(rgb)),
-                Some(zeron_proto::project_icon::format_color(rgb)),
-            ),
-        };
         self.mutate(
             serde_json::json!({
                 "op": "editProject",
                 "spaceId": dialog.space_id,
                 "name": name,
                 "iconPath": icon_path,
-                "colorIndex": color_index,
-                "color": color,
+                "colorIndex": dialog.color,
             }),
             cx,
         );
@@ -9165,8 +9027,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// Name, icon path (typed or browsed), color swatches or a custom hex,
-    /// with a live preview of the resulting tile.
+    /// Project name, browsed artwork and palette color, with a live preview.
     fn render_edit_project_dialog(
         &mut self,
         theme: &Theme,
@@ -9183,18 +9044,16 @@ impl Shell {
         {
             window.focus(&browser.filter.focus_handle(cx), cx);
         }
-        let color = dialog
-            .color
-            .unwrap_or(ProjectColor::Palette(dialog.derived_color));
+        let color = dialog.color.unwrap_or(dialog.derived_color);
         let name = dialog.input.read(cx).text().trim().to_string();
         let name = if name.is_empty() {
             dialog.original_name.clone()
         } else {
             name
         };
-        // Load artwork for the path as typed; an invalid path previews the monogram.
+        // Preview the selected artwork.
         let preview_path =
-            zeron_proto::project_icon::normalize_path(Some(dialog.icon_input.read(cx).text())).ok();
+            zeron_proto::project_icon::normalize_path(dialog.icon_path.as_deref()).ok();
         let artwork = preview_path.and_then(|path| {
             if dialog.preview.as_ref().map(|(loaded, _)| loaded) != Some(&path) {
                 let context = dialog.artwork.clone();
@@ -9247,12 +9106,14 @@ impl Shell {
             });
 
         let input = dialog.input.clone();
-        let icon_input = dialog.icon_input.clone();
-        let hex_input = dialog.hex_input.clone();
+        let icon_name = dialog
+            .icon_path
+            .as_deref()
+            .and_then(|path| path.rsplit('/').next())
+            .unwrap_or("Automatic")
+            .to_string();
         let error = dialog.error.clone();
-        let can_choose = dialog.local_root.is_some();
         let browsing = dialog.browser.is_some();
-        let hex = zeron_proto::project_icon::parse_color(hex_input.read(cx).text());
         let section_label = |label: &'static str| {
             div()
                 .mt(px(14.0))
@@ -9275,50 +9136,23 @@ impl Shell {
                 .bg(tone)
                 .cursor_pointer()
         };
-        let swatches = EDIT_PROJECT_SWATCHES
-            .iter()
-            .enumerate()
-            .map(|(ix, swatch_color)| {
-                let swatch_color = *swatch_color;
+        let swatches = (0..zeron_proto::project_icon::COLOR_COUNT)
+            .map(|index| {
                 swatch(
-                    ("edit-project-color", ix),
-                    super::project_icon::monogram_tone(swatch_color, theme),
-                    swatch_color == color,
+                    ("edit-project-color", index as usize),
+                    super::project_icon::monogram_tone(index, theme),
+                    index == color,
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if let Some(dialog) = this.edit_project_dialog.as_mut() {
-                        dialog.color = Some(swatch_color);
-                        dialog
-                            .hex_input
-                            .update(cx, |input, cx| input.set_text(String::new(), cx));
+                        dialog.color = Some(index);
                         cx.notify();
                     }
                 }))
             })
             .collect::<Vec<_>>();
-        let custom_swatch = match hex {
-            Some(rgb) => swatch(
-                ("edit-project-custom-color", 0),
-                super::project_icon::monogram_tone(ProjectColor::Custom(rgb), theme),
-                color == ProjectColor::Custom(rgb),
-            )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if let Some(dialog) = this.edit_project_dialog.as_mut() {
-                    dialog.color = Some(ProjectColor::Custom(rgb));
-                    cx.notify();
-                }
-            })),
-            None => swatch(
-                ("edit-project-custom-color", 0),
-                crate::theme::ink(0.04),
-                false,
-            )
-            .border_1()
-            .border_color(crate::theme::hairline(0.12))
-            .cursor_default(),
-        };
 
-        let browser = self.render_icon_browser(theme, can_choose, cx);
+        let browser = self.render_icon_browser(theme, cx);
         let card = popover::dialog_card(theme)
             .on_key_down(cx.listener(|this, ev: &gpui::KeyDownEvent, _, cx| {
                 let browsing = this
@@ -9363,9 +9197,20 @@ impl Shell {
                     .flex_row()
                     .items_center()
                     .gap(px(8.0))
-                    .child(div().flex_1().min_w_0().child(
-                        popover::dialog_field(icon_input.into_any_element()).py(px(6.0)),
-                    ))
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            div()
+                                .w_full()
+                                .h(px(32.0))
+                                .px(px(12.0))
+                                .rounded(px(8.0))
+                                .bg(crate::theme::ink(0.04))
+                                .flex()
+                                .items_center()
+                                .text_size(crate::typography::ui_rems(14.0))
+                                .child(icon_name),
+                        ),
+                    )
                     .child(
                         div()
                             .id("edit-project-browse")
@@ -9392,9 +9237,7 @@ impl Shell {
                                     .flex_none()
                                     .text_color(theme.text_muted),
                             )
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.toggle_icon_browser(cx)),
-                            )
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_icon_browser(cx)))
                             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
                                 if matches!(event.keystroke.key.as_str(), "enter" | "space") {
                                     this.toggle_icon_browser(cx);
@@ -9404,15 +9247,6 @@ impl Shell {
                     ),
             )
             .children(browser)
-            .when(!browsing, |el| {
-                el.child(
-                    div()
-                        .mt(px(6.0))
-                        .text_size(crate::typography::ui_rems(11.0))
-                        .text_color(theme.text_muted)
-                        .child("Relative to the repository root. Blank is automatic."),
-                )
-            })
             .child(section_label("Color"))
             .child(
                 div()
@@ -9422,18 +9256,6 @@ impl Shell {
                     .flex_wrap()
                     .gap(px(8.0))
                     .children(swatches),
-            )
-            .child(
-                div()
-                    .mt(px(10.0))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.0))
-                    .child(custom_swatch)
-                    .child(div().w(px(116.0)).flex_none().child(
-                        popover::dialog_field(hex_input.into_any_element()).py(px(2.0)),
-                    )),
             )
             .when_some(error, |el, error| {
                 el.child(
@@ -9467,9 +9289,9 @@ impl Shell {
                             .child(
                                 popover::btn_primary(theme, "Save")
                                     .id("edit-project-save")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.submit_edit_project(cx)
-                                    })),
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.submit_edit_project(cx)),
+                                    ),
                             ),
                     ),
             );
@@ -9478,12 +9300,7 @@ impl Shell {
 
     /// The icon browser panel: a filter over a virtualized list of images
     /// with thumbnails; thumbnails load only for rows on screen.
-    fn render_icon_browser(
-        &mut self,
-        theme: &Theme,
-        can_choose: bool,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
+    fn render_icon_browser(&mut self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
         let browser = self.edit_project_dialog.as_ref()?.browser.as_ref()?;
         const ROW_HEIGHT: f32 = 28.0;
         let note = |text: String| {
@@ -9552,41 +9369,24 @@ impl Shell {
                         ),
                 )
                 .child(
+                    popover::menu_row(theme, false, "project-icon-automatic")
+                        .id("project-icon-automatic")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(dialog) = this.edit_project_dialog.as_mut() {
+                                dialog.icon_path = None;
+                                dialog.browser = None;
+                                cx.notify();
+                            }
+                        }))
+                        .child("Automatic"),
+                )
+                .child(
                     div()
                         .id("edit-project-icon-list-host")
                         .h(px(ROW_HEIGHT * ICON_BROWSER_ROWS as f32 + 8.0))
                         .py(px(popover::CARD_INSET))
                         .child(list),
                 )
-                .when(can_choose, |el| {
-                    el.child(
-                        div()
-                            .px(px(4.0))
-                            .py(px(4.0))
-                            .border_t_1()
-                            .border_color(crate::theme::hairline(0.08))
-                            .flex()
-                            .flex_row()
-                            .justify_end()
-                            .child(
-                                popover::btn_ghost(
-                                    theme,
-                                    if cfg!(target_os = "macos") {
-                                        "Choose in Finder…"
-                                    } else {
-                                        "Choose File…"
-                                    },
-                                    "edit-project-choose-icon",
-                                )
-                                .id("edit-project-choose-icon")
-                                .text_size(crate::typography::ui_rems(12.0))
-                                .py(px(4.0))
-                                .on_click(
-                                    cx.listener(|this, _, _, cx| this.choose_project_icon(cx)),
-                                ),
-                            ),
-                    )
-                })
                 .into_any_element(),
         )
     }
@@ -9622,7 +9422,7 @@ impl Shell {
                     let entity = cx.new(|cx| {
                         super::project_icon::ProjectIcon::new(
                             String::new(),
-                            ProjectColor::Palette(0),
+                            0,
                             context,
                             Some(path),
                             engine,
@@ -9822,40 +9622,6 @@ impl Shell {
         }
 
         overlays
-    }
-}
-
-/// Native visual QA for the Edit Project dialog (no engine: browse results
-/// are supplied; thumbnails read the local checkout).
-#[cfg(feature = "appshots-fixture")]
-impl Shell {
-    pub fn fixture_edit_project(&mut self, space_id: &str, cx: &mut Context<Self>) {
-        self.open_edit_project(space_id.into(), cx);
-    }
-    pub fn fixture_edit_project_hex(&mut self, hex: &str, cx: &mut Context<Self>) {
-        if let Some(dialog) = &self.edit_project_dialog {
-            let hex = hex.to_string();
-            dialog
-                .hex_input
-                .update(cx, |input, cx| input.set_text(hex, cx));
-        }
-    }
-    pub fn fixture_edit_project_browse(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
-        self.toggle_icon_browser(cx);
-        if let Some(browser) = self
-            .edit_project_dialog
-            .as_mut()
-            .and_then(|dialog| dialog.browser.as_mut())
-        {
-            browser._search = None;
-            browser.results = Some(Ok(zeron_proto::project_icon::rank_browse_results(
-                "", paths,
-            )));
-        }
-        cx.notify();
-    }
-    pub fn fixture_edit_project_pick(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.pick_browsed_icon(Some(index), cx);
     }
 }
 

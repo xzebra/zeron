@@ -575,7 +575,6 @@ impl Client {
             name: None,
             icon_path: None,
             color_index: None,
-            color: None,
             git_detected: true,
             git_checked_at: Some(Utc::now()),
             checkout_id: None,

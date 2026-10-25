@@ -3,7 +3,7 @@ use super::*;
 use crate::files::client::{FilesRequestContext, WorkspaceFilesClient};
 use crate::image_media::{MediaImage, decode_project_icon, release_media};
 
-use zeron_proto::project_icon::{ProjectColor, candidates};
+use zeron_proto::project_icon::candidates;
 
 /// A project can point at a subdirectory; match the remote workspace RPC's
 /// checkout-root resolution, including linked worktrees with a .git file.
@@ -51,23 +51,19 @@ fn load_local_icon(root: &std::path::Path, icon_path: Option<&str>) -> Option<Me
     None
 }
 
-/// A project color's tone in the current appearance. These are explicit
-/// colors, independent of the theme accent: legacy slots use their curated
-/// pair, custom colors are kept legible like them.
-pub(super) fn monogram_tone(color: ProjectColor, theme: &Theme) -> gpui::Hsla {
-    let dark = theme.appearance.is_dark();
-    let rgb = match color {
-        ProjectColor::Palette(index) => {
-            let palette = zeron_proto::project_icon::LEGACY_PALETTE;
-            let (dark_tone, light_tone) = palette[index as usize % palette.len()];
-            if dark { dark_tone } else { light_tone }
-        }
-        ProjectColor::Custom(rgb) => zeron_proto::project_icon::appearance_tone(rgb, dark),
+/// The project palette's tone for the current appearance.
+pub(super) fn monogram_tone(color: u32, theme: &Theme) -> gpui::Hsla {
+    let (dark, light) = zeron_proto::project_icon::PALETTE
+        [color as usize % zeron_proto::project_icon::PALETTE.len()];
+    let rgb = if theme.appearance.is_dark() {
+        dark
+    } else {
+        light
     };
     gpui::Hsla::from(gpui::rgb(rgb))
 }
 
-fn monogram(name: &str, color: ProjectColor, selected: bool, theme: &Theme) -> AnyElement {
+fn monogram(name: &str, color: u32, selected: bool, theme: &Theme) -> AnyElement {
     let letter = name
         .trim()
         .chars()
@@ -113,7 +109,7 @@ fn monogram(name: &str, color: ProjectColor, selected: bool, theme: &Theme) -> A
 
 pub(super) struct ProjectIcon {
     name: String,
-    color: ProjectColor,
+    color: u32,
     media: Option<MediaImage>,
     refreshed: std::time::Instant,
     _task: Task<()>,
@@ -124,7 +120,7 @@ impl ProjectIcon {
     /// points square.
     pub(super) fn new(
         name: String,
-        color: ProjectColor,
+        color: u32,
         context: FilesRequestContext,
         icon_path: Option<String>,
         engine: Option<crate::state::EngineHandle>,
@@ -393,8 +389,8 @@ impl ProjectIcons {
             .map(|space| space.display_name().to_string())
             .unwrap_or_else(|| "Home".into());
         let color = representative.map_or_else(
-            || ProjectColor::Palette(zeron_proto::project_icon::path_color_index("home")),
-            zeron_proto::project_icon::project_color,
+            || zeron_proto::project_icon::path_color_index("home"),
+            zeron_proto::project_icon::color_index,
         );
         let Some(context) = space.map(|space| artwork_context(state, space)) else {
             return monogram(&name, color, selected, Theme::of(cx));
