@@ -167,6 +167,12 @@ impl WorkspaceDoc {
         row.insert("deviceId", space.device_id.as_str())?;
         row.insert("path", space.path.as_str())?;
         set_opt_str(&row, "name", space.name.as_deref())?;
+        set_opt_str(&row, "iconPath", space.icon_path.as_deref())?;
+        match space.color_index {
+            Some(index) => row.insert("colorIndex", index)?,
+            None => row.delete("colorIndex")?,
+        }
+        set_opt_str(&row, "color", space.color.as_deref())?;
         row.insert("gitDetected", space.git_detected)?;
         set_opt_ms(&row, "gitCheckedAt", space.git_checked_at)?;
         set_opt_str(&row, "checkoutId", space.checkout_id.as_deref())?;
@@ -677,6 +683,12 @@ pub(crate) struct RawSpace {
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
+    icon_path: Option<String>,
+    #[serde(default)]
+    color_index: Option<u32>,
+    #[serde(default)]
+    color: Option<String>,
+    #[serde(default)]
     git_detected: bool,
     #[serde(default)]
     git_checked_at: Option<i64>,
@@ -696,6 +708,9 @@ impl From<RawSpace> for Space {
             device_id: raw.device_id,
             path: raw.path,
             name: raw.name,
+            icon_path: raw.icon_path,
+            color_index: raw.color_index,
+            color: raw.color,
             git_detected: raw.git_detected,
             git_checked_at: raw.git_checked_at.map(dt),
             checkout_id: raw.checkout_id,
@@ -921,6 +936,9 @@ mod tests {
             device_id: device_id.into(),
             path: path.into(),
             name: None,
+            icon_path: None,
+            color_index: None,
+            color: None,
             git_detected: false,
             git_checked_at: None,
             checkout_id: None,

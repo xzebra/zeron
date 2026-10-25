@@ -7,9 +7,26 @@ enum ProjectTile {
         String(name.trimmingCharacters(in: .whitespaces).first ?? "?").uppercased()
     }
 
+    /// The project's tone: a custom `#rrggbb` color kept legible per
+    /// appearance exactly as the desktop draws it, else its palette slot.
+    static func tone(colorIndex: Int, customColor: String? = nil) -> UIColor {
+        if let customColor, let light = projectColorTone(color: customColor, dark: false),
+           let dark = projectColorTone(color: customColor, dark: true) {
+            return Palette.dynamic(light, dark)
+        }
+        return Palette.projectDots[colorIndex % Palette.projectDots.count]
+    }
+
     /// The tile as an image (composer chips), light/dark aware.
-    static func image(name: String, colorIndex: Int, side: CGFloat = 14) -> UIImage {
-        let tone = Palette.projectDots[colorIndex % Palette.projectDots.count]
+    static func image(name: String, colorIndex: Int, customColor: String? = nil, side: CGFloat = 14, artwork: Data? = nil) -> UIImage {
+        if let artwork, let image = UIImage(data: artwork) {
+            let ratio = min(side / image.size.width, side / image.size.height)
+            let size = CGSize(width: image.size.width * ratio, height: image.size.height * ratio)
+            return UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { _ in
+                image.draw(in: CGRect(x: (side - size.width) / 2, y: (side - size.height) / 2, width: size.width, height: size.height))
+            }.withRenderingMode(.alwaysOriginal)
+        }
+        let tone = tone(colorIndex: colorIndex, customColor: customColor)
         let asset = UIImageAsset()
         let scale = UITraitCollection.current.displayScale > 0 ? UITraitCollection.current.displayScale : 3
         let format = UIGraphicsImageRendererFormat()

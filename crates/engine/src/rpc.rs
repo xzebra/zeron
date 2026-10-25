@@ -652,6 +652,16 @@ enum MutateParams {
         #[serde(default)]
         name: Option<String>,
     },
+    #[serde(rename_all = "camelCase")]
+    EditProject {
+        space_id: String,
+        name: Option<String>,
+        icon_path: Option<String>,
+        #[serde(default)]
+        color_index: Option<u32>,
+        #[serde(default)]
+        color: Option<String>,
+    },
     /// Hard delete: cascades to every chat (and session row) in the space.
     /// Live runs hosted here are interrupted best-effort.
     #[serde(rename_all = "camelCase")]
@@ -1694,6 +1704,29 @@ impl EngineRpc {
                     .create_space(&space_id, &device_id, &path, name, git_detected)
                     .map_err(failed),
             },
+            MutateParams::EditProject {
+                space_id,
+                name,
+                icon_path,
+                color_index,
+                color,
+            } => self
+                .workspace
+                .edit_project(
+                    &space_id,
+                    name.as_deref(),
+                    icon_path.as_deref(),
+                    color_index,
+                    color.as_deref(),
+                )
+                .map_err(failed)
+                .and_then(|found| {
+                    if found {
+                        Ok(())
+                    } else {
+                        Err(RpcError::Failed("Project no longer exists".into()))
+                    }
+                }),
             MutateParams::RenameSpace { space_id, name } => self
                 .workspace
                 .rename_space(&space_id, name.as_deref())
@@ -5119,6 +5152,29 @@ mod tests {
             p,
             MutateParams::ChangeSidebarPin { change: zeron_proto::SidebarPinChange::Move { session_id, before, .. } }
                 if session_id == "chat-b" && before.as_deref() == Some("chat-a")
+        ));
+    }
+
+    #[test]
+    fn edit_project_accepts_a_custom_color_and_older_clients() {
+        let params: MutateParams = serde_json::from_value(serde_json::json!({
+            "op": "editProject", "spaceId": "s", "name": null, "iconPath": null,
+            "colorIndex": 3, "color": "#ef4444",
+        }))
+        .unwrap();
+        assert!(matches!(
+            params,
+            MutateParams::EditProject { color: Some(ref color), color_index: Some(3), .. }
+                if color == "#ef4444"
+        ));
+        // Clients that predate custom colors omit it.
+        let params: MutateParams = serde_json::from_value(serde_json::json!({
+            "op": "editProject", "spaceId": "s", "colorIndex": 1,
+        }))
+        .unwrap();
+        assert!(matches!(
+            params,
+            MutateParams::EditProject { color: None, .. }
         ));
     }
 

@@ -118,6 +118,16 @@ pub struct Space {
     /// User rename; absent ⇒ display = basename(path).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Optional artwork path relative to the checkout root; absent means automatic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_path: Option<String>,
+    /// Chosen monogram palette slot; absent means derived from the path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_index: Option<u32>,
+    /// Custom `#rrggbb` color, saved with its nearest `color_index` for older
+    /// peers; see [`crate::project_icon::project_color`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
     /// Owner-stamped: is `path` inside a git work tree?
     #[serde(default)]
     pub git_detected: bool,

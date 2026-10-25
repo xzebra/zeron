@@ -33,6 +33,10 @@ struct ProjectOption: Equatable {
     var isCloud = false
     /// `owner/name` of its GitHub repository, when known.
     var githubRepo: String?
+    var iconPath: String? = nil
+    var customColorIndex: Int? = nil
+    var customColor: String? = nil
+    var iconData: Data? = nil
 }
 
 struct HostOption: Equatable {
@@ -67,6 +71,7 @@ final class NewSessionViewController: UIViewController, UIGestureRecognizerDeleg
     private let embedded: Bool
     private var composerRest: NSLayoutConstraint?
     private var backgroundObserver: NSObjectProtocol?
+    private var projectObserver: AnyObject?
 
     deinit {
         if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
@@ -111,6 +116,7 @@ final class NewSessionViewController: UIViewController, UIGestureRecognizerDeleg
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        projectObserver = app.observe { [weak self] in self?.refreshChips() }
         // The app can be killed in the background: keep the draft first.
         backgroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
             self?.rememberDraft()
@@ -314,7 +320,7 @@ final class NewSessionViewController: UIViewController, UIGestureRecognizerDeleg
             chips.append(ComposerChip(id: "branch", title: draft.branch.map { "From \($0)" } ?? "Default branch", symbol: nil, icon: BranchIcon.sized()))
         } else if let p = project {
             // The project, then the host it runs on.
-            chips.append(ComposerChip(id: "project", title: p.groupName, symbol: nil, icon: ProjectTile.image(name: p.groupName, colorIndex: p.colorIndex)))
+            chips.append(ComposerChip(id: "project", title: p.groupName, symbol: nil, icon: ProjectTile.image(name: p.groupName, colorIndex: p.colorIndex, customColor: p.customColor, artwork: p.iconData)))
             chips.append(ComposerChip(id: "host", title: p.deviceName, symbol: "desktopcomputer"))
             if p.git {
                 chips.append(ComposerChip(id: "branch", title: draft.worktree ? "New worktree" : (draft.branch ?? "Current branch"), symbol: nil, icon: BranchIcon.sized()))
@@ -359,7 +365,7 @@ final class NewSessionViewController: UIViewController, UIGestureRecognizerDeleg
             let first = members[0]
             var hosts: [String] = []
             for m in members where !hosts.contains(m.deviceName) { hosts.append(m.deviceName) }
-            return UIAction(title: first.groupName, subtitle: hosts.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }.joined(separator: ", "), image: ProjectTile.image(name: first.groupName, colorIndex: first.colorIndex, side: 18), state: first.groupKey == picked ? .on : .off) { [weak self] _ in
+            return UIAction(title: first.groupName, subtitle: hosts.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }.joined(separator: ", "), image: ProjectTile.image(name: first.groupName, colorIndex: first.colorIndex, customColor: first.customColor, side: 18, artwork: first.iconData), state: first.groupKey == picked ? .on : .off) { [weak self] _ in
                 self?.pickProject(members)
             }
         })]
@@ -394,6 +400,15 @@ final class NewSessionViewController: UIViewController, UIGestureRecognizerDeleg
                 self.present(UINavigationController(rootViewController: vc), animated: true)
             },
         ]))
+        if !groups.isEmpty {
+            sections.append(UIMenu(title: "Edit Project…", image: UIImage(systemName: "pencil"), children: groups.map { members in
+                let p = members[0]
+                return UIAction(title: p.groupName) { [weak self] _ in
+                    guard let self else { return }
+                    self.editProject(p.id, app: self.app)
+                }
+            }))
+        }
         return UIMenu(title: "Project", children: sections)
     }
 

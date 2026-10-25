@@ -38,6 +38,7 @@ mod host_stream;
 mod live;
 pub mod provider_login;
 pub mod providers;
+mod project_icon;
 pub mod rpc;
 pub mod runtime;
 pub mod session;

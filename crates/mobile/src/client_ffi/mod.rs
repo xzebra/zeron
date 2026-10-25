@@ -325,6 +325,42 @@ impl CoreClient {
             .await
     }
 
+    pub async fn project_icon(&self, space_id: String) -> CoreResult<Vec<u8>> {
+        let client = self.client.clone();
+        on_runtime(async move {
+            let (mime, bytes) = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                client.project_icon(&space_id),
+            )
+            .await
+            .map_err(|_| {
+                zeron_client::ClientError::HostUnavailable("Project icon timed out".into())
+            })??;
+            tokio::task::spawn_blocking(move || crate::project_icon::thumbnail(&mime, bytes))
+                .await
+                .map_err(|_| zeron_client::ClientError::Internal("Icon task failed".into()))?
+                .map_err(zeron_client::ClientError::InvalidArgument)
+        })
+        .await
+    }
+
+    pub fn edit_project(
+        &self,
+        space_id: String,
+        name: Option<String>,
+        icon_path: Option<String>,
+        color_index: Option<u32>,
+        color: Option<String>,
+    ) -> CoreResult<()> {
+        Ok(self.client.edit_project(
+            &space_id,
+            name.as_deref(),
+            icon_path.as_deref(),
+            color_index,
+            color.as_deref(),
+        )?)
+    }
+
     pub fn rename_project(&self, space_id: String, name: Option<String>) -> CoreResult<()> {
         Ok(self.client.rename_project(&space_id, name.as_deref())?)
     }
@@ -672,6 +708,14 @@ pub fn project_color_index(space_path: String) -> u32 {
 #[uniffi::export]
 pub fn project_color_count() -> u32 {
     zc::workspace::PROJECT_COLOR_COUNT
+}
+
+/// A custom `#rrggbb` project color as `0xRRGGBB`, kept legible in the
+/// given appearance exactly as the desktop draws it. `None` when invalid.
+#[uniffi::export]
+pub fn project_color_tone(color: String, dark: bool) -> Option<u32> {
+    zeron_proto::project_icon::parse_color(&color)
+        .map(|rgb| zeron_proto::project_icon::appearance_tone(rgb, dark))
 }
 
 /// Split a user prompt into visible text + attachment refs.
