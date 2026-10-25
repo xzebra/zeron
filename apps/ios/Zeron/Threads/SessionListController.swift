@@ -295,7 +295,6 @@ class SessionListController: UIViewController, UICollectionViewDelegate {
                     guard let self else { return }
                     self.editProject(project.id, app: self.app)
                 })
-                if let colors = self.projectColorMenu(project.id, app: self.app) { projectActions.append(colors) }
             }
             return UIMenu(children: projectActions + [
                 UIAction(title: vm.pinned ? "Unpin" : "Pin", image: UIImage(systemName: vm.pinned ? "pin.slash" : "pin")) { _ in self.app.setPinned(id, !vm.pinned) },
