@@ -656,7 +656,10 @@ async fn project_artwork_uses_the_host_image_pipeline_after_editing() {
             .iter()
             .find(|project| project.id == id)
             .unwrap();
-        assert_eq!(project.icon_path.as_deref(), Some("apps/web/public/favicon.svg"));
+        assert_eq!(
+            project.icon_path.as_deref(),
+            Some("apps/web/public/favicon.svg")
+        );
         assert_eq!(project.color.as_deref(), Some("#ff5a1f"));
     }
     let (mime, bytes) = client.project_icon("space-zeron").await.unwrap();
