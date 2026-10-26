@@ -1771,6 +1771,15 @@ pub fn rows_for_entry(
                 row.timestamp = None;
                 row.copy_text = None;
                 row.compact_fold = Some(work_id.clone());
+                if let RowKind::ToolGroup {
+                    tools, auto_open, ..
+                } = &mut row.kind
+                {
+                    // A streaming turn can already have finished these tools.
+                    // Opening its work fold should only auto-open running work.
+                    *auto_open &= tools.iter().any(|tool| !tool.resolved);
+                    row.version = tool_fingerprint(tools, *auto_open);
+                }
             }
             let header = Row {
                 id: work_id,
@@ -4997,6 +5006,11 @@ impl Transcript {
                 _ => None,
             })
             .collect();
+        let previous_compact_folds: HashSet<_> = self
+            .rows
+            .iter()
+            .filter_map(|row| row.compact_fold.clone())
+            .collect();
         let now = Instant::now();
         let mut live_tool_groups = HashSet::new();
         for row in &new_rows {
@@ -5010,8 +5024,16 @@ impl Transcript {
             }
             live_tool_groups.insert(row.id.clone());
             let historical = historical_tools.get(&row.entry_id);
-            let whole_group_historical =
-                fully_historical.contains(&row.entry_id) || (replay_baseline && baseline.is_none());
+            // Opening a compact fold mounts existing body rows. That is a
+            // disclosure, not a stream arrival, including work that finished
+            // while the fold was closed. Subsequent arrivals still animate.
+            let mounting_compact_body = row
+                .compact_fold
+                .as_ref()
+                .is_some_and(|id| !previous_compact_folds.contains(id));
+            let whole_group_historical = fully_historical.contains(&row.entry_id)
+                || (replay_baseline && baseline.is_none())
+                || mounting_compact_body;
             let is_historical = |tool: &ToolItem| {
                 whole_group_historical || historical.is_some_and(|ids| ids.contains(&tool.part_id))
             };
@@ -5023,7 +5045,7 @@ impl Transcript {
             let previous = previous_tools.get(&row.id);
             let is_new_group = historical_count == 0 && previous.is_none();
             let reveal = self.tool_group_reveals.entry(row.id.clone()).or_default();
-            if baseline_changed && historical_count > 0 {
+            if mounting_compact_body || (baseline_changed && historical_count > 0) {
                 reveal.rendered_open = None;
                 if let Some(fold) = self.folds.get_mut(&row.id) {
                     fold.toggled_at = None;
@@ -5034,7 +5056,7 @@ impl Transcript {
             if is_new_group {
                 reveal.header_started_at.get_or_insert(now);
             }
-            if baseline_changed && historical_count == tools.len() {
+            if mounting_compact_body || (baseline_changed && historical_count == tools.len()) {
                 reveal.header_started_at = None;
             }
             let first_row_delay = is_new_group.then_some(TOOL_FIRST_ROW_DELAY_MS).unwrap_or(0);
@@ -12520,6 +12542,61 @@ mod tests {
         let mid = compact_body_height(closing, 300.0, false, now + TOOL_FOLD.total() / 2);
         assert!(mid > 0.0 && mid < 120.0, "mid-close: {mid}");
         assert_eq!(compact_body_height(closing, 300.0, false, landed), 0.0);
+    }
+
+    #[gpui::test]
+    fn compact_fold_opens_existing_tools_without_replaying_arrivals(cx: &mut gpui::TestAppContext) {
+        with_tool_group_navigation(cx, |state, transcript, cx| {
+            state.update(cx, |state, _| {
+                state.transcript = vec![assistant(
+                    "a1",
+                    MessageStatus::Complete,
+                    vec![
+                        reasoning_part("r1", "Checking the files"),
+                        tool_part("t1", "pwd"),
+                    ],
+                )];
+                state.transcript_revision += 1;
+            });
+            transcript.update(cx, |this, cx| {
+                this.compact_mode = true;
+                this.last_source = None;
+                this.sync(cx);
+                let work_id: SharedString = "a1#work".into();
+                assert!(this.rows.iter().all(|row| row.compact_fold.is_none()));
+                for _ in 0..2 {
+                    this.toggle_fold(work_id.clone(), 0.0, false, cx);
+                    let row = this
+                        .rows
+                        .iter()
+                        .find(|row| row.compact_fold.is_some())
+                        .unwrap();
+                    let RowKind::ToolGroup { auto_open, .. } = &row.kind else {
+                        panic!("expected a tool group");
+                    };
+                    assert!(!auto_open, "completed tools must start collapsed");
+                    let reveal = &this.tool_group_reveals[&row.id];
+                    assert!(
+                        reveal.header_started_at.is_none(),
+                        "opening replayed the header entrance"
+                    );
+                    assert!(
+                        reveal.starts.iter().all(Option::is_none),
+                        "opening replayed tool arrivals"
+                    );
+                    assert!(
+                        this.folds
+                            .get(&row.id)
+                            .is_none_or(|fold| fold.toggled_at.is_none())
+                    );
+                    this.toggle_fold(work_id.clone(), 0.0, false, cx);
+                    this.folds.get_mut(&work_id).unwrap().toggled_at = None;
+                    this.last_source = None;
+                    this.sync(cx);
+                    assert!(this.rows.iter().all(|row| row.compact_fold.is_none()));
+                }
+            });
+        });
     }
 
     #[gpui::test]
