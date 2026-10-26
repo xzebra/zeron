@@ -287,7 +287,6 @@ fn space(id: &str, device_id: &str, path: &str) -> Space {
         path: path.into(),
         name: None,
         icon_path: None,
-        color_index: None,
         git_detected: false,
         git_checked_at: None,
         checkout_id: None,
@@ -2393,17 +2392,16 @@ fn edit_project_syncs_artwork_and_name_across_checkouts() {
             "clone-b",
             Some(" My App "),
             Some(" apps/web/public/icon.png "),
-            Some(19))
+        )
         .unwrap()
     );
     for id in ["clone-a", "clone-b"] {
         let row = ws.space(id).unwrap().unwrap();
         assert_eq!(row.name.as_deref(), Some("My App"));
         assert_eq!(row.icon_path.as_deref(), Some("apps/web/public/icon.png"));
-        assert_eq!(row.color_index, Some(19));
     }
     let other = ws.space("other").unwrap().unwrap();
-    assert!(other.icon_path.is_none() && other.color_index.is_none());
+    assert!(other.icon_path.is_none());
     let restored = RegistryDoc::from_bytes(&ws.to_bytes().unwrap(), "dev-a").unwrap();
     assert_eq!(
         restored
@@ -2415,11 +2413,7 @@ fn edit_project_syncs_artwork_and_name_across_checkouts() {
         Some("apps/web/public/icon.png")
     );
     assert!(
-        ws.edit_project("clone-a", Some("Bad"), Some("../outside.png"), None)
-            .is_err()
-    );
-    assert!(
-        ws.edit_project("clone-a", Some("Bad"), None, Some(20))
+        ws.edit_project("clone-a", Some("Bad"), Some("../outside.png"))
             .is_err()
     );
     assert_eq!(
@@ -2442,21 +2436,20 @@ fn edit_project_syncs_artwork_and_name_across_checkouts() {
     );
     // No name leaves it alone; a blank one restores the basename.
     assert!(
-        ws.edit_project("clone-a", None, Some("logo.svg"), Some(1))
+        ws.edit_project("clone-a", None, Some("logo.svg"))
             .unwrap()
     );
     let row = ws.space("clone-b").unwrap().unwrap();
     assert_eq!(row.name.as_deref(), Some("My App"));
     assert_eq!(row.icon_path.as_deref(), Some("logo.svg"));
     assert!(
-        ws.edit_project("clone-a", Some(" "), Some(" "), None)
+        ws.edit_project("clone-a", Some(" "), Some(" "))
             .unwrap()
     );
     for id in ["clone-a", "clone-b"] {
         let row = ws.space(id).unwrap().unwrap();
         assert!(row.name.is_none());
         assert!(row.icon_path.is_none());
-        assert!(row.color_index.is_none());
     }
-    assert!(!ws.edit_project("missing", None, None, None).unwrap());
+    assert!(!ws.edit_project("missing", None, None).unwrap());
 }

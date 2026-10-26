@@ -121,9 +121,6 @@ pub struct Space {
     /// Optional artwork path relative to the checkout root; absent means automatic.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon_path: Option<String>,
-    /// Chosen monogram palette slot; absent means derived from the path.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub color_index: Option<u32>,
     /// Owner-stamped: is `path` inside a git work tree?
     #[serde(default)]
     pub git_detected: bool,

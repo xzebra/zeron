@@ -1140,7 +1140,6 @@ impl Client {
             path: path.to_owned(),
             name: None,
             icon_path: None,
-            color_index: None,
             git_detected,
             git_checked_at: None,
             checkout_id: None,
@@ -1196,18 +1195,17 @@ impl Client {
         Ok(id)
     }
 
-    /// Name, artwork and color for every checkout of the project. `name: None`
-    /// keeps the current name; no artwork path or color means automatic.
+    /// Name and artwork for every checkout of the project. `name: None`
+    /// keeps the current name; no artwork path means automatic.
     pub fn edit_project(
         &self,
         space_id: &str,
         name: Option<&str>,
         icon_path: Option<&str>,
-        color_index: Option<u32>,
     ) -> Result<()> {
         if self
             .inner
-            .registry_write(|doc| doc.edit_project(space_id, name, icon_path, color_index))?
+            .registry_write(|doc| doc.edit_project(space_id, name, icon_path))?
         {
             Ok(())
         } else {

@@ -307,7 +307,6 @@ mod project_tests {
             path: format!("/{device}/{id}"),
             name: None,
             icon_path: None,
-            color_index: None,
             git_detected: repository.is_some(),
             git_checked_at: None,
             checkout_id: None,

@@ -31,16 +31,12 @@ enum Palette {
     static let chip = dynamic(0xE7E7EB, 0x1C1C20)
 
     /// Project tones — the desktop's monogram palette (project_icon.rs):
-    /// The first eight remain the automatic path colors; the rest are
-    /// explicit choices shared with desktop.
+    /// slate, blue, violet, rose, amber, emerald, teal, orange. Indexed by the
+    /// core's `project_color_index` (FNV-1a of the project path).
     static let projectDots: [UIColor] = [
         dynamic(0x475569, 0x94A3B8), dynamic(0x2563EB, 0x93C5FD), dynamic(0x7C3AED, 0xC4B5FD),
         dynamic(0xBE123C, 0xFDA4AF), dynamic(0xA16207, 0xFCD34D), dynamic(0x047857, 0x6EE7B7),
         dynamic(0x0F766E, 0x5EEAD4), dynamic(0xC2410C, 0xFDBA74),
-        dynamic(0x78716C, 0xA8A29E), dynamic(0xDC2626, 0xF87171), dynamic(0xDB2777, 0xF472B6),
-        dynamic(0xC026D3, 0xE879F9), dynamic(0x9333EA, 0xC084FC), dynamic(0x4F46E5, 0xA5B4FC),
-        dynamic(0x0284C7, 0x38BDF8), dynamic(0x0891B2, 0x22D3EE), dynamic(0x16A34A, 0x4ADE80),
-        dynamic(0x4D7C0F, 0xA3E635), dynamic(0x854D0E, 0xFDE047), dynamic(0x9A3412, 0xD99775),
     ]
 
     /// Desktop sidebar "subline": `text_muted` @ 0.5 (project label, branch).

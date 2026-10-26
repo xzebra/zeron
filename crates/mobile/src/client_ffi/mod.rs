@@ -383,13 +383,12 @@ impl CoreClient {
         space_id: String,
         name: Option<String>,
         icon_path: Option<String>,
-        color_index: Option<u32>,
     ) -> CoreResult<()> {
         Ok(self.client.edit_project(
             &space_id,
             name.as_deref(),
             icon_path.as_deref(),
-            color_index)?)
+        )?)
     }
 
     pub fn rename_project(&self, space_id: String, name: Option<String>) -> CoreResult<()> {

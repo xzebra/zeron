@@ -84,9 +84,9 @@ final class AppModel {
     }
 
     /// `name: nil` keeps the current name; a nil icon path means automatic.
-    func editProject(_ id: String, name: String?, iconPath: String?, colorIndex: Int) throws {
+    func editProject(_ id: String, name: String?, iconPath: String?) throws {
         guard let client else { throw CoreError.InvalidArgument(message: "Sign in to edit projects") }
-        try client.editProject(spaceId: id, name: name, iconPath: iconPath, colorIndex: UInt32(colorIndex))
+        try client.editProject(spaceId: id, name: name, iconPath: iconPath)
         // Retrying Save also refreshes artwork replaced at the same path.
         projectIconTask?.cancel()
         projectIconTask = nil

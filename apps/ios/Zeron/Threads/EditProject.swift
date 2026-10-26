@@ -27,9 +27,7 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
     private let searchField = UISearchTextField()
     private let images = UITableView(frame: .zero, style: .plain)
     private let statusLabel = UILabel()
-    private var swatchButtons: [UIButton] = []
     private var selectedPath: String?
-    private var selectedColorIndex: Int
     private var artwork: Data?
     private var automaticArtwork: Data?
     private var paths: [String] = []
@@ -44,7 +42,6 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
         self.project = project
         self.app = app
         selectedPath = project.iconPath
-        selectedColorIndex = project.colorIndex
         artwork = project.iconData
         automaticArtwork = project.iconPath == nil ? project.iconData : nil
         super.init(nibName: nil, bundle: nil)
@@ -87,7 +84,6 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
         ])
         buildName()
         buildIcon()
-        buildColors()
         statusLabel.font = Fonts.ui(.sans, 13)
         statusLabel.textColor = Palette.danger
         statusLabel.numberOfLines = 0
@@ -191,34 +187,9 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
         iconSection.addArrangedSubview(browser)
     }
 
-    private func buildColors() {
-        let colors = UIStackView(arrangedSubviews: [label("Color")])
-        colors.axis = .vertical
-        colors.spacing = 10
-        let names = ["Slate", "Blue", "Violet", "Rose", "Amber", "Emerald", "Teal", "Orange", "Stone", "Red", "Pink", "Fuchsia", "Purple", "Indigo", "Sky", "Cyan", "Green", "Lime", "Yellow", "Clay"]
-        for start in stride(from: 0, to: Palette.projectDots.count, by: 5) {
-            let row = UIStackView()
-            row.distribution = .fillEqually
-            row.spacing = 12
-            for index in start..<min(start + 5, Palette.projectDots.count) {
-                let button = UIButton(type: .custom)
-                button.tag = index
-                button.accessibilityLabel = names[index]
-                button.accessibilityIdentifier = "project-color-\(index)"
-                button.heightAnchor.constraint(equalToConstant: 42).isActive = true
-                button.layer.cornerRadius = 12
-                button.addTarget(self, action: #selector(pickSwatch(_:)), for: .touchUpInside)
-                swatchButtons.append(button)
-                row.addArrangedSubview(button)
-            }
-            colors.addArrangedSubview(row)
-        }
-        content.addArrangedSubview(colors)
-    }
-
     private func refreshSelection() {
         let name = nameField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        preview.image = ProjectTile.image(name: name.isEmpty ? project.name : name, colorIndex: selectedColorIndex, side: 48, artwork: artwork)
+        preview.image = ProjectTile.image(name: name.isEmpty ? project.name : name, colorIndex: project.colorIndex, side: 48, artwork: artwork)
         iconField.text = selectedPath.map { ($0 as NSString).lastPathComponent } ?? "Automatic"
         var config = UIButton.Configuration.plain()
         config.image = UIImage(systemName: browser.isHidden ? "folder" : "folder.fill")
@@ -226,15 +197,6 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
         config.background.backgroundColor = browser.isHidden ? .clear : Palette.controlFill
         config.cornerStyle = .medium
         browseButton.configuration = config
-        for (index, button) in swatchButtons.enumerated() {
-            let chosen = index == selectedColorIndex
-            button.backgroundColor = ProjectTile.tone(colorIndex: index)
-            button.setImage(chosen ? UIImage(systemName: "checkmark") : nil, for: .normal)
-            button.tintColor = Palette.text
-            button.layer.borderWidth = chosen ? 2 : 0
-            button.layer.borderColor = Palette.accent.cgColor
-            button.accessibilityTraits = chosen ? [.button, .selected] : .button
-        }
     }
 
     @objc private func nameChanged() { refreshSelection() }
@@ -287,7 +249,7 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
         let path = indexPath.row == 0 ? nil : paths[indexPath.row - 1]
         cell.textLabel?.text = path.map { ($0 as NSString).lastPathComponent } ?? "Automatic"
         cell.detailTextLabel?.text = path.map { ($0 as NSString).deletingLastPathComponent }
-        cell.imageView?.image = path.flatMap { thumbnails[$0] } ?? ProjectTile.image(name: nameField.text ?? project.groupName, colorIndex: selectedColorIndex, side: 30, artwork: path == nil ? automaticArtwork : nil)
+        cell.imageView?.image = path.flatMap { thumbnails[$0] } ?? ProjectTile.image(name: nameField.text ?? project.groupName, colorIndex: project.colorIndex, side: 30, artwork: path == nil ? automaticArtwork : nil)
         cell.accessoryType = path == selectedPath ? .checkmark : .none
         cell.tintColor = Palette.accent
         cell.accessibilityIdentifier = path.map { "project-image:\($0)" } ?? "project-image-automatic"
@@ -342,11 +304,6 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
         }
     }
 
-    @objc private func pickSwatch(_ button: UIButton) {
-        selectedColorIndex = button.tag
-        refreshSelection()
-    }
-
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         textField.resignFirstResponder()
         return true
@@ -363,7 +320,7 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
         view.endEditing(true)
         let name = (nameField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            try app.editProject(project.id, name: name == project.groupName ? nil : name, iconPath: selectedPath, colorIndex: selectedColorIndex)
+            try app.editProject(project.id, name: name == project.groupName ? nil : name, iconPath: selectedPath)
             dismiss(animated: true)
         } catch {
             showError(error.localizedDescription)

@@ -657,8 +657,6 @@ enum MutateParams {
         space_id: String,
         name: Option<String>,
         icon_path: Option<String>,
-        #[serde(default)]
-        color_index: Option<u32>,
     },
     /// Hard delete: cascades to every chat (and session row) in the space.
     /// Live runs hosted here are interrupted best-effort.
@@ -1706,15 +1704,9 @@ impl EngineRpc {
                 space_id,
                 name,
                 icon_path,
-                color_index,
             } => self
                 .workspace
-                .edit_project(
-                    &space_id,
-                    name.as_deref(),
-                    icon_path.as_deref(),
-                    color_index,
-                )
+                .edit_project(&space_id, name.as_deref(), icon_path.as_deref())
                 .map_err(failed)
                 .and_then(|found| {
                     if found {

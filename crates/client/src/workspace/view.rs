@@ -26,13 +26,16 @@ use crate::connectivity::{PRESENCE_FRESH_MS, SendState};
 
 /// Size of the project color palette [`ProjectRef::color_index`] indexes —
 /// the desktop's monogram palette (`ui/src/shell/project_icon.rs`).
-pub const PROJECT_COLOR_COUNT: u32 = zeron_proto::project_icon::COLOR_COUNT;
+pub const PROJECT_COLOR_COUNT: u32 = 8;
 
 /// Stable palette slot for a project, exactly as the desktop picks its
 /// monogram tone: 32-bit FNV-1a of the project's path (`"home"` without a
 /// project), so a project has the same color on every device.
 pub fn project_color_index(space_path: &str) -> u32 {
-    zeron_proto::project_icon::path_color_index(space_path)
+    let hash = space_path.bytes().fold(2_166_136_261u32, |h, b| {
+        (h ^ u32::from(b)).wrapping_mul(16_777_619)
+    });
+    hash % PROJECT_COLOR_COUNT
 }
 
 /// Compact age label for list rows: `now`, `34m`, `4h`, `2d` (legacy
@@ -462,14 +465,11 @@ fn build_row(chat: &Chat, rc: &RowContext<'_>, cx: &DeriveContext<'_>) -> Arc<Se
         .space_id
         .as_deref()
         .and_then(|id| rc.spaces.get(id))
-        .map(|space| {
+        .map(|space| ProjectRef {
+            id: space.id.clone(),
+            name: space.display_name().to_owned(),
             // Clones of one repository share their representative's color.
-            let representative = representative_space(rc.all_spaces, space);
-            ProjectRef {
-                id: space.id.clone(),
-                name: space.display_name().to_owned(),
-                color_index: zeron_proto::project_icon::color_index(representative),
-            }
+            color_index: project_color_index(&representative_space(rc.all_spaces, space).path),
         });
     let device = rc.devices.get(chat.device_id.as_str());
     let config = chat.config.as_ref();
@@ -657,7 +657,7 @@ pub(crate) fn derive(
                 id: space.id.clone(),
                 name: space.display_name().to_owned(),
                 path: space.path.clone(),
-                color_index: zeron_proto::project_icon::color_index(representative),
+                color_index: project_color_index(&representative.path),
                 device_id: space.device_id.clone(),
                 device_name: if is_cloud_device(&space.device_id) {
                     Some(CLOUD_NAME.to_owned())

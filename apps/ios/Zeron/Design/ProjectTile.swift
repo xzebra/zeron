@@ -7,10 +7,6 @@ enum ProjectTile {
         String(name.trimmingCharacters(in: .whitespaces).first ?? "?").uppercased()
     }
 
-    static func tone(colorIndex: Int) -> UIColor {
-        Palette.projectDots[colorIndex % Palette.projectDots.count]
-    }
-
     /// The tile as an image (composer chips), light/dark aware.
     static func image(name: String, colorIndex: Int, side: CGFloat = 14, artwork: Data? = nil) -> UIImage {
         if let artwork, let image = UIImage(data: artwork) {
@@ -20,7 +16,7 @@ enum ProjectTile {
                 image.draw(in: CGRect(x: (side - size.width) / 2, y: (side - size.height) / 2, width: size.width, height: size.height))
             }.withRenderingMode(.alwaysOriginal)
         }
-        let tone = tone(colorIndex: colorIndex)
+        let tone = Palette.projectDots[colorIndex % Palette.projectDots.count]
         let asset = UIImageAsset()
         let scale = UITraitCollection.current.displayScale > 0 ? UITraitCollection.current.displayScale : 3
         let format = UIGraphicsImageRendererFormat()

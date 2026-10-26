@@ -270,7 +270,6 @@ pub(crate) fn spaces(now: i64) -> Vec<Space> {
             path: path.into(),
             name: name.map(str::to_owned),
             icon_path: None,
-            color_index: None,
             git_detected: git,
             git_checked_at: git.then(|| ms(now)),
             checkout_id: git.then(|| format!("co-{id}")),

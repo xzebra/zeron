@@ -641,7 +641,7 @@ fn provider_switch_needs_a_host_that_switches() {
 #[test]
 fn an_icon_only_edit_refreshes_the_project_snapshot() {
     let (client, _dir) = demo(fast());
-    client.edit_project("space-zeron", None, Some("assets/icon.svg"), None).unwrap();
+    client.edit_project("space-zeron", None, Some("assets/icon.svg")).unwrap();
     let workspace = client.workspace();
     for project in workspace.projects.iter().filter(|project| project.group_name == "zeron") {
         assert_eq!(project.icon_path.as_deref(), Some("assets/icon.svg"));

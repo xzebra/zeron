@@ -51,19 +51,25 @@ fn load_local_icon(root: &std::path::Path, icon_path: Option<&str>) -> Option<Me
     None
 }
 
-/// The project palette's tone for the current appearance.
-pub(super) fn monogram_tone(color: u32, theme: &Theme) -> gpui::Hsla {
-    let (dark, light) = zeron_proto::project_icon::PALETTE
-        [color as usize % zeron_proto::project_icon::PALETTE.len()];
-    let rgb = if theme.appearance.is_dark() {
-        dark
-    } else {
-        light
-    };
-    gpui::Hsla::from(gpui::rgb(rgb))
-}
+// Curated badge tones: (dark appearance, light appearance). Keep the ordering
+// stable so projects retain their assigned color. These are explicit colors,
+// independent of the selected theme accent; only their appearance variant changes.
+const MONOGRAM_PALETTE: [(u32, u32); 8] = [
+    (0x94a3b8, 0x475569), // slate
+    (0x93c5fd, 0x2563eb), // blue
+    (0xc4b5fd, 0x7c3aed), // violet
+    (0xfda4af, 0xbe123c), // rose
+    (0xfcd34d, 0xa16207), // amber
+    (0x6ee7b7, 0x047857), // emerald
+    (0x5eead4, 0x0f766e), // teal
+    (0xfdba74, 0xc2410c), // orange
+];
 
-fn monogram(name: &str, color: u32, selected: bool, theme: &Theme) -> AnyElement {
+pub(super) fn monogram(name: &str, seed: &str, selected: bool, theme: &Theme) -> AnyElement {
+    // FNV-1a selects a stable entry from the curated palette.
+    let hash = seed.bytes().fold(2166136261u32, |hash, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(16777619)
+    });
     let letter = name
         .trim()
         .chars()
@@ -71,7 +77,12 @@ fn monogram(name: &str, color: u32, selected: bool, theme: &Theme) -> AnyElement
         .unwrap_or('?')
         .to_uppercase()
         .to_string();
-    let tone = monogram_tone(color, theme);
+    let (dark, light) = MONOGRAM_PALETTE[hash as usize % MONOGRAM_PALETTE.len()];
+    let tone = gpui::Hsla::from(gpui::rgb(if theme.appearance.is_dark() {
+        dark
+    } else {
+        light
+    }));
     let mut hover_text = tone;
     hover_text.l = if theme.appearance.is_dark() {
         (tone.l + 0.12).min(0.95)
@@ -109,7 +120,7 @@ fn monogram(name: &str, color: u32, selected: bool, theme: &Theme) -> AnyElement
 
 pub(super) struct ProjectIcon {
     name: String,
-    color: u32,
+    seed: String,
     media: Option<MediaImage>,
     refreshed: std::time::Instant,
     _task: Task<()>,
@@ -120,7 +131,7 @@ impl ProjectIcon {
     /// points square.
     pub(super) fn new(
         name: String,
-        color: u32,
+        seed: String,
         context: FilesRequestContext,
         icon_path: Option<String>,
         engine: Option<crate::state::EngineHandle>,
@@ -180,7 +191,7 @@ impl ProjectIcon {
         });
         Self {
             name,
-            color,
+            seed,
             media: None,
             refreshed: std::time::Instant::now(),
             _task: task,
@@ -201,7 +212,7 @@ impl Render for ProjectIcon {
                 .size_full()
                 .object_fit(gpui::ObjectFit::Contain)
                 .into_any_element(),
-            None => monogram(&self.name, self.color, false, Theme::of(cx)),
+            None => monogram(&self.name, &self.seed, false, Theme::of(cx)),
         }
     }
 }
@@ -388,28 +399,26 @@ impl ProjectIcons {
         let name = representative
             .map(|space| space.display_name().to_string())
             .unwrap_or_else(|| "Home".into());
-        let color = representative.map_or_else(
-            || zeron_proto::project_icon::path_color_index("home"),
-            zeron_proto::project_icon::color_index,
-        );
+        let seed = representative
+            .map(|space| space.path.clone())
+            .unwrap_or_else(|| "home".into());
         let Some(context) = space.map(|space| artwork_context(state, space)) else {
-            return monogram(&name, color, selected, Theme::of(cx));
+            return monogram(&name, &seed, selected, Theme::of(cx));
         };
         let icon_path = representative.and_then(|space| space.icon_path.clone());
         let key = format!(
-            "{:?}:{:?}:{}:{:?}:{}:{:?}:{:?}",
+            "{:?}:{:?}:{}:{:?}:{}:{:?}",
             profile,
             context.target_device_id,
             context.cwd,
             context.checkout_id,
             name,
-            icon_path,
-            color
+            icon_path
         );
         let engine = state.engine().cloned();
         // Don't cache a remote miss before a connection exists.
         if context.target_device_id.is_some() && engine.is_none() {
-            return monogram(&name, color, selected, Theme::of(cx));
+            return monogram(&name, &seed, selected, Theme::of(cx));
         }
         let mut cache = self.entries.borrow_mut();
         cache.retain(|_, entity| entity.read(cx).refreshed.elapsed() < Duration::from_secs(300));
@@ -417,7 +426,7 @@ impl ProjectIcons {
             .entry(key)
             .or_insert_with(|| {
                 let entity = cx.new(|cx| {
-                    ProjectIcon::new(name.clone(), color, context, icon_path, engine, 16.0, cx)
+                    ProjectIcon::new(name.clone(), seed.clone(), context, icon_path, engine, 16.0, cx)
                 });
                 // The owner draws the selected monogram and redraws when artwork lands.
                 cx.observe(&entity, |_, _, cx| cx.notify()).detach();
@@ -426,7 +435,7 @@ impl ProjectIcons {
             .clone();
         drop(cache);
         if entity.read(cx).media.is_none() {
-            return monogram(&name, color, selected, Theme::of(cx));
+            return monogram(&name, &seed, selected, Theme::of(cx));
         }
         entity.into_any_element()
     }

@@ -1093,7 +1093,7 @@ public protocol CoreClientProtocol: AnyObject, Sendable {
     
     func devices()  -> [DeviceView]
     
-    func editProject(spaceId: String, name: String?, iconPath: String?, colorIndex: UInt32?) throws 
+    func editProject(spaceId: String, name: String?, iconPath: String?) throws 
     
     /**
      * Devices that can run sessions (new-session / new-project pickers).
@@ -1713,14 +1713,13 @@ open func devices() -> [DeviceView]  {
 })
 }
     
-open func editProject(spaceId: String, name: String?, iconPath: String?, colorIndex: UInt32?)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+open func editProject(spaceId: String, name: String?, iconPath: String?)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
         uniffiCallStatus in
     uniffi_zeron_mobile_fn_method_coreclient_edit_project(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(spaceId),
         FfiConverterOptionString.lower(name),
-        FfiConverterOptionString.lower(iconPath),
-        FfiConverterOptionUInt32.lower(colorIndex),uniffiCallStatus
+        FfiConverterOptionString.lower(iconPath),uniffiCallStatus
     )
 }
 }
@@ -21958,7 +21957,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_zeron_mobile_checksum_method_coreclient_devices() != 57985) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_zeron_mobile_checksum_method_coreclient_edit_project() != 5297) {
+    if (uniffi_zeron_mobile_checksum_method_coreclient_edit_project() != 18902) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_zeron_mobile_checksum_method_coreclient_execution_devices() != 15578) {

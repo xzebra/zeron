@@ -2911,9 +2911,7 @@ pub(super) struct EditProjectDialog {
     pub space_id: String,
     pub input: Entity<ComposerInput>,
     pub icon_path: Option<String>,
-    /// Chosen monogram color; `None` keeps the path-derived one.
-    pub color: Option<u32>,
-    pub derived_color: u32,
+    pub seed: String,
     /// The name shown on open; leaving it untouched keeps the stored name.
     pub original_name: String,
     /// Where artwork is read and browsed: this device's checkout, else the
@@ -7150,7 +7148,6 @@ impl Shell {
             path: path.clone(),
             name: None,
             icon_path: None,
-            color_index: None,
             git_detected,
             git_checked_at: None,
             checkout_id: None,
@@ -8814,8 +8811,7 @@ impl Shell {
         let current = representative.display_name().to_string();
         let original_name = current.clone();
         let icon_path = representative.icon_path.clone();
-        let color = representative.color_index;
-        let derived_color = zeron_proto::project_icon::path_color_index(&representative.path);
+        let seed = representative.path.clone();
         let artwork = super::project_icon::artwork_context(state, space);
         let field = |placeholder, cx: &mut Context<ComposerInput>| {
             ComposerInput::new(placeholder, cx)
@@ -8842,8 +8838,7 @@ impl Shell {
             space_id,
             input,
             icon_path,
-            color,
-            derived_color,
+            seed,
             original_name,
             artwork,
             preview: None,
@@ -9006,7 +9001,6 @@ impl Shell {
                 "spaceId": dialog.space_id,
                 "name": name,
                 "iconPath": icon_path,
-                "colorIndex": dialog.color,
             }),
             cx,
         );
@@ -9015,7 +9009,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// Project name, browsed artwork and palette color, with a live preview.
+    /// Project name and browsed artwork, with a live preview.
     fn render_edit_project_dialog(
         &mut self,
         theme: &Theme,
@@ -9032,7 +9026,7 @@ impl Shell {
         {
             window.focus(&browser.filter.focus_handle(cx), cx);
         }
-        let color = dialog.color.unwrap_or(dialog.derived_color);
+        let seed = dialog.seed.clone();
         let name = dialog.input.read(cx).text().trim().to_string();
         let name = if name.is_empty() {
             dialog.original_name.clone()
@@ -9050,7 +9044,7 @@ impl Shell {
                 let entity = cx.new(|cx| {
                     super::project_icon::ProjectIcon::new(
                         String::new(),
-                        color,
+                        seed.clone(),
                         context,
                         icon_path,
                         engine,
@@ -9067,30 +9061,12 @@ impl Shell {
                 .map(|(_, entity)| entity.clone())
                 .filter(|entity| entity.read(cx).has_artwork())
         });
-        let tone = super::project_icon::monogram_tone(color, theme);
-        let letter = name
-            .chars()
-            .next()
-            .unwrap_or('?')
-            .to_uppercase()
-            .to_string();
         let tile = div()
             .size(px(36.0))
             .flex_none()
-            .rounded(px(8.0))
-            .overflow_hidden()
-            .flex()
-            .items_center()
-            .justify_center()
-            .map(|el| match artwork {
-                Some(artwork) => el.child(artwork),
-                None => el
-                    .bg(tone.opacity(0.14))
-                    .text_color(tone)
-                    .font_family(theme.font_mono.clone())
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_size(px(17.0))
-                    .child(letter),
+            .child(match artwork {
+                Some(artwork) => artwork.into_any_element(),
+                None => super::project_icon::monogram(&name, &seed, false, theme),
             });
 
         let input = dialog.input.clone();
@@ -9109,37 +9085,6 @@ impl Shell {
                 .text_color(theme.text_muted)
                 .child(label)
         };
-        let swatch = |id: (&'static str, usize), tone: gpui::Hsla, selected: bool| {
-            div()
-                .id(id)
-                .size(px(24.0))
-                .flex_none()
-                .rounded(px(6.0))
-                .border_2()
-                .border_color(if selected {
-                    theme.text
-                } else {
-                    gpui::transparent_black()
-                })
-                .bg(tone)
-                .cursor_pointer()
-        };
-        let swatches = (0..zeron_proto::project_icon::COLOR_COUNT)
-            .map(|index| {
-                swatch(
-                    ("edit-project-color", index as usize),
-                    super::project_icon::monogram_tone(index, theme),
-                    index == color,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if let Some(dialog) = this.edit_project_dialog.as_mut() {
-                        dialog.color = Some(index);
-                        cx.notify();
-                    }
-                }))
-            })
-            .collect::<Vec<_>>();
-
         let browser = self.render_icon_browser(theme, cx);
         let card = popover::dialog_card(theme)
             .on_key_down(cx.listener(|this, ev: &gpui::KeyDownEvent, _, cx| {
@@ -9235,16 +9180,6 @@ impl Shell {
                     ),
             )
             .children(browser)
-            .child(section_label("Color"))
-            .child(
-                div()
-                    .mt(px(6.0))
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .gap(px(8.0))
-                    .children(swatches),
-            )
             .when_some(error, |el, error| {
                 el.child(
                     div()
@@ -9410,7 +9345,7 @@ impl Shell {
                     let entity = cx.new(|cx| {
                         super::project_icon::ProjectIcon::new(
                             String::new(),
-                            0,
+                            String::new(),
                             context,
                             Some(path),
                             engine,

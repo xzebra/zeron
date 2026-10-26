@@ -1129,7 +1129,6 @@ impl RegistryDoc {
             ("path", json!(space.path)),
             ("name", opt_str(space.name.as_deref())),
             ("iconPath", opt_str(space.icon_path.as_deref())),
-            ("colorIndex", json!(space.color_index)),
             ("gitDetected", json!(space.git_detected)),
             ("gitCheckedAt", opt_ms(space.git_checked_at)),
             ("checkoutId", opt_str(space.checkout_id.as_deref())),
@@ -1165,13 +1164,9 @@ impl RegistryDoc {
         space_id: &str,
         name: Option<&str>,
         icon_path: Option<&str>,
-        color_index: Option<u32>,
     ) -> Result<bool, DocError> {
         let icon_path = zeron_proto::project_icon::normalize_path(icon_path)
             .map_err(|message| DocError::Schema(message.into()))?;
-        if color_index.is_some_and(|index| index >= zeron_proto::project_icon::COLOR_COUNT) {
-            return Err(DocError::Schema("Unknown project color".into()));
-        }
         let Some(space) = self.space(space_id)? else {
             return Ok(false);
         };
@@ -1182,10 +1177,7 @@ impl RegistryDoc {
             .into_iter()
             .filter(|s| zeron_proto::view::project_key(s) == key)
         {
-            let mut set = fields([
-                ("iconPath", opt_str(icon_path.as_deref())),
-                ("colorIndex", json!(color_index)),
-            ]);
+            let mut set = fields([("iconPath", opt_str(icon_path.as_deref()))]);
             if let Some(name) = &name {
                 set.insert("name".into(), name.clone());
             }
@@ -1691,7 +1683,6 @@ impl RegistryDoc {
                     ("path", json!(space.path)),
                     ("name", opt_str(space.name.as_deref())),
                     ("iconPath", opt_str(space.icon_path.as_deref())),
-                    ("colorIndex", json!(space.color_index)),
                     ("gitDetected", json!(space.git_detected)),
                     ("gitCheckedAt", opt_ms(space.git_checked_at)),
                     ("checkoutId", opt_str(space.checkout_id.as_deref())),

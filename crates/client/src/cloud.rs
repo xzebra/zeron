@@ -574,7 +574,6 @@ impl Client {
             path: format!("{CLOUD_HOME}/{name}"),
             name: None,
             icon_path: None,
-            color_index: None,
             git_detected: true,
             git_checked_at: Some(Utc::now()),
             checkout_id: None,
