@@ -75,10 +75,7 @@ final class AppModel {
                 let data = try? await client.projectIcon(spaceId: project.id)
                 guard !Task.isCancelled, self.projectIconGeneration == generation else { return }
                 if let data {
-                    self.projectArtwork[key] = data
-                    if let png = UIImage(data: data)?.preparingThumbnail(of: CGSize(width: 64, height: 64))?.pngData() {
-                        self.projectArtworkCache?.store(png, for: key)
-                    }
+                    self.cacheProjectArtwork(data, for: key)
                     self.refreshWorkspace()
                     self.observers.values.forEach { $0() }
                 }
@@ -87,15 +84,29 @@ final class AppModel {
         }
     }
 
+    private func cacheProjectArtwork(_ data: Data, for key: String) {
+        projectArtwork[key] = data
+        if let png = UIImage(data: data)?.preparingThumbnail(of: CGSize(width: 64, height: 64))?.pngData() {
+            projectArtworkCache?.store(png, for: key)
+        }
+    }
+
     /// `name: nil` keeps the current name; a nil icon path means automatic.
-    func editProject(_ id: String, name: String?, iconPath: String?) throws {
+    func editProject(_ id: String, name: String?, iconPath: String?, artwork: Data?) throws {
         guard let client else { throw CoreError.InvalidArgument(message: "Sign in to edit projects") }
         try client.editProject(spaceId: id, name: name, iconPath: iconPath)
-        // Retrying Save also refreshes artwork replaced at the same path.
         projectIconTask?.cancel()
         projectIconTask = nil
         projectIconGeneration = UUID()
         projectIconAttempts = [:]
+        if let artwork {
+            let group = rawProjects.first(where: { $0.id == id })?.groupKey
+            for project in rawProjects where project.id == id || (group != nil && project.groupKey == group) {
+                let key = "\(project.id):\(iconPath ?? "automatic")"
+                cacheProjectArtwork(artwork, for: key)
+                projectIconAttempts[key] = Date()
+            }
+        }
         refreshWorkspace()
     }
 

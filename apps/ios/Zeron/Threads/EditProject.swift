@@ -32,9 +32,10 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
     private var automaticArtwork: Data?
     private var paths: [String] = []
     private var thumbnails: [String: UIImage] = [:]
+    private var renderedArtwork: [String: Data] = [:]
     private var searchTask: Task<Void, Never>?
     private var previewTask: Task<Void, Never>?
-    private var thumbnailTasks: [String: Task<Void, Never>] = [:]
+    private var thumbnailTasks: [String: Task<Data?, Never>] = [:]
     private var searchGeneration = UUID()
     private var previewGeneration = UUID()
 
@@ -262,11 +263,15 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
         let id = project.id
         thumbnailTasks[path] = Task { @MainActor [weak self] in
             defer { self?.thumbnailTasks[path] = nil }
-            guard let data = try? await client.projectImage(spaceId: id, path: path), !Task.isCancelled, let self, let image = UIImage(data: data) else { return }
+            guard let data = try? await client.projectImage(spaceId: id, path: path), !Task.isCancelled, let self,
+                  let image = UIImage(data: data)?.preparingThumbnail(of: CGSize(width: 64, height: 64)),
+                  let png = image.pngData() else { return nil }
+            self.renderedArtwork[path] = png
             self.thumbnails[path] = image.preparingThumbnail(of: CGSize(width: 30, height: 30)) ?? image
             if let row = self.paths.firstIndex(of: path), self.images.indexPathsForVisibleRows?.contains(IndexPath(row: row + 1, section: 0)) == true {
                 self.images.reloadRows(at: [IndexPath(row: row + 1, section: 0)], with: .none)
             }
+            return png
         }
     }
 
@@ -289,9 +294,23 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
         guard let client = app.client else { return }
         let id = project.id
         let path = selectedPath
+        if let data = path.flatMap({ renderedArtwork[$0] }) ?? (path == nil ? automaticArtwork : nil) {
+            artwork = data
+            refreshSelection()
+            return
+        }
+        let pending = path.flatMap { thumbnailTasks[$0] }
         previewTask = Task { @MainActor [weak self] in
             do {
-                let data = try await client.projectImage(spaceId: id, path: path)
+                let data: Data
+                if let pending {
+                    guard let rendered = await pending.value else {
+                        throw CoreError.InvalidArgument(message: "Couldn’t load this image.")
+                    }
+                    data = rendered
+                } else {
+                    data = try await client.projectImage(spaceId: id, path: path)
+                }
                 guard !Task.isCancelled, let self, self.previewGeneration == generation else { return }
                 self.artwork = data
                 if path == nil { self.automaticArtwork = data }
@@ -320,7 +339,7 @@ private final class ProjectEditorViewController: UIViewController, UITextFieldDe
         view.endEditing(true)
         let name = (nameField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            try app.editProject(project.id, name: name == project.groupName ? nil : name, iconPath: selectedPath)
+            try app.editProject(project.id, name: name == project.groupName ? nil : name, iconPath: selectedPath, artwork: artwork)
             dismiss(animated: true)
         } catch {
             showError(error.localizedDescription)
