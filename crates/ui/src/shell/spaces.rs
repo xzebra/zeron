@@ -5907,7 +5907,7 @@ impl Shell {
                         .and_then(|space| state.project_members(space).first().map(|m| m.id.clone()))
                 })
                 .flatten();
-            let new_chat_button = group_space.map(|project| {
+            let new_chat_button = group_space.clone().map(|project| {
                 div()
                     .id(SharedString::from(format!(
                         "sidebar-group-new-chat-{collapse_key}"
@@ -5949,6 +5949,16 @@ impl Shell {
                 )
                     .group(group_name)
                 .id(SharedString::from(format!("sidebar-group-{collapse_key}")))
+                .when_some(group_space, |header, space_id| {
+                    header.on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                            this.space_menu.open((space_id.clone(), event.position));
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    )
+                })
                 .on_click(cx.listener(move |this, _, _, cx| {
                     let was_open = !this.sidebar_collapsed_groups.contains(&toggle_key);
                     this.begin_sidebar_disclosure_motion(
