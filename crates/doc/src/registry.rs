@@ -1130,7 +1130,6 @@ impl RegistryDoc {
             ("name", opt_str(space.name.as_deref())),
             ("iconPath", opt_str(space.icon_path.as_deref())),
             ("colorIndex", json!(space.color_index)),
-
             ("gitDetected", json!(space.git_detected)),
             ("gitCheckedAt", opt_ms(space.git_checked_at)),
             ("checkoutId", opt_str(space.checkout_id.as_deref())),
@@ -1195,7 +1194,8 @@ impl RegistryDoc {
         Ok(true)
     }
 
-    /// LWW display-name set; `None` restores the basename.
+    /// LWW display-name set from any device; `None` clears back to the derived
+    /// name (basename of path). `false` when no such row.
     pub fn rename_space(&mut self, space_id: &str, name: Option<&str>) -> Result<bool, DocError> {
         if !self.row_exists(KIND_SPACES, space_id) {
             return Ok(false);
@@ -1692,7 +1692,6 @@ impl RegistryDoc {
                     ("name", opt_str(space.name.as_deref())),
                     ("iconPath", opt_str(space.icon_path.as_deref())),
                     ("colorIndex", json!(space.color_index)),
-
                     ("gitDetected", json!(space.git_detected)),
                     ("gitCheckedAt", opt_ms(space.git_checked_at)),
                     ("checkoutId", opt_str(space.checkout_id.as_deref())),
