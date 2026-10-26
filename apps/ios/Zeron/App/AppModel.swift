@@ -51,6 +51,7 @@ final class AppModel {
     private var rows: [String: SessionRow] = [:]
     private var rawProjects: [ProjectView] = []
     private var projectArtwork: [String: Data] = [:]
+    private var projectArtworkCache: ProjectArtworkCache?
     private var projectIconAttempts: [String: Date] = [:]
     private var projectIconTask: Task<Void, Never>?
     private var projectIconGeneration = UUID()
@@ -83,6 +84,9 @@ final class AppModel {
                 guard !Task.isCancelled, self.projectIconGeneration == generation else { return }
                 if let data, self.rawProjects.contains(where: { self.iconKey($0) == key }) {
                     self.projectArtwork[key] = data
+                    if let png = UIImage(data: data)?.preparingThumbnail(of: CGSize(width: 64, height: 64))?.pngData() {
+                        self.projectArtworkCache?.store(png, for: key)
+                    }
                     self.refreshWorkspace()
                     self.observers.values.forEach { $0() }
                 }
@@ -247,6 +251,7 @@ final class AppModel {
         )
         do {
             client = try CoreClient(config: config, credentials: credentials, listener: bridge)
+            projectArtworkCache = ProjectArtworkCache(directory: dir.appendingPathComponent("project-icons", isDirectory: true))
             // Only real accounts persist; dev bearers come from launch args
             // (and would be rejected by the production edge next launch).
             if case .workOs = credentials { Credentials.store(credentials) }
@@ -329,6 +334,8 @@ final class AppModel {
         projectIconTask = nil
         projectIconGeneration = UUID()
         projectArtwork = [:]
+        projectArtworkCache?.clear()
+        projectArtworkCache = nil
         projectIconAttempts = [:]
         lastHosts = []
         connectivity = nil
@@ -462,6 +469,12 @@ final class AppModel {
         rawProjects = ws.projects
         let validIconKeys = Set(rawProjects.map(iconKey))
         projectArtwork = projectArtwork.filter { validIconKeys.contains($0.key) }
+        if projectsChanged {
+            for key in validIconKeys where projectArtwork[key] == nil {
+                projectArtwork[key] = projectArtworkCache?.load(key)
+            }
+            projectArtworkCache?.retain(validIconKeys)
+        }
         projectIconAttempts = projectIconAttempts.filter { validIconKeys.contains($0.key) }
         var all: [String: SessionRow] = [:]
         func vm(_ r: SessionRow) -> SessionRowVM {
