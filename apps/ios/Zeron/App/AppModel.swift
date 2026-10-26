@@ -67,19 +67,26 @@ final class AppModel {
         guard !candidates.isEmpty else { return }
         let generation = projectIconGeneration
         projectIconTask = Task { @MainActor [weak self] in
+            defer {
+                if let self, self.projectIconGeneration == generation {
+                    self.projectIconTask = nil
+                    // An edit may have queued another path while this batch loaded.
+                    self.loadProjectArtwork()
+                }
+            }
             for project in candidates {
                 guard !Task.isCancelled, let self, self.projectIconGeneration == generation else { return }
                 let key = self.iconKey(project)
+                guard self.rawProjects.contains(where: { self.iconKey($0) == key }) else { continue }
                 self.projectIconAttempts[key] = Date()
-                let data = try? await client.projectIcon(spaceId: project.id)
+                let data = try? await client.projectImage(spaceId: project.id, path: project.iconPath)
                 guard !Task.isCancelled, self.projectIconGeneration == generation else { return }
-                if let data {
+                if let data, self.rawProjects.contains(where: { self.iconKey($0) == key }) {
                     self.projectArtwork[key] = data
                     self.refreshWorkspace()
                     self.observers.values.forEach { $0() }
                 }
             }
-            self?.projectIconTask = nil
         }
     }
 
