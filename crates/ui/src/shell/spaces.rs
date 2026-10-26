@@ -1353,10 +1353,7 @@ mod pinned_session_tests {
             // The globe/archive slot is always reserved, so hovering swaps its
             // glyph in place: the title keeps its width and the status and time
             // columns never move.
-            assert_eq!(
-                cx.debug_bounds("chat-title-older").unwrap().size.width,
-                title.size.width
-            );
+            assert_eq!(cx.debug_bounds("chat-title-older").unwrap().size.width, title.size.width);
             assert_eq!(cx.debug_bounds("chat-status-older").unwrap(), status);
             assert_eq!(cx.debug_bounds("chat-time-older").unwrap(), time);
         }
@@ -2648,10 +2645,7 @@ fn git_url(query: &str) -> Option<String> {
     } else {
         return None;
     };
-    let mut parts = path
-        .trim_matches('/')
-        .split('/')
-        .filter(|part| !part.is_empty());
+    let mut parts = path.trim_matches('/').split('/').filter(|part| !part.is_empty());
     (parts.next().is_some() && parts.next().is_some()).then(|| query.to_owned())
 }
 
@@ -3701,10 +3695,7 @@ impl Shell {
                     index -= 1;
                 }
                 let shown: Vec<&String> = shown.into_iter().filter(|m| *m != chat).collect();
-                let after = index
-                    .checked_sub(1)
-                    .and_then(|i| shown.get(i))
-                    .map(|m| (*m).clone());
+                let after = index.checked_sub(1).and_then(|i| shown.get(i)).map(|m| (*m).clone());
                 let before = shown.get(index).map(|m| (*m).clone());
                 if after.is_none() && before.is_none() {
                     (others.last().cloned(), None)
@@ -3960,12 +3951,7 @@ impl Shell {
         let projects = state.projects();
         let names: Vec<String> = projects
             .iter()
-            .map(|members| {
-                state
-                    .representative_space(members[0])
-                    .display_name()
-                    .to_string()
-            })
+            .map(|members| state.representative_space(members[0]).display_name().to_string())
             .collect();
         let mut rows: Vec<SpacesMenuRow> = Vec::new();
         if query.trim().is_empty() {
@@ -5280,11 +5266,7 @@ impl Shell {
             (active, archived)
         };
         if active.is_none() && archived.is_none() {
-            self.show_notice(
-                crate::toast::ToastKind::Error,
-                "Clear the project filter to rename this session",
-                cx,
-            );
+            self.show_notice(crate::toast::ToastKind::Error, "Clear the project filter to rename this session", cx);
             return false;
         }
         if let Some(chat) = &active {
@@ -5530,7 +5512,12 @@ impl Shell {
         }
         // Sections keep their placed order, as Pinned does, not activity order.
         for ((_, rows), section) in custom_groups.iter_mut().zip(&custom_sections) {
-            rows.sort_by_key(|row| section.session_ids.iter().position(|id| id == &row.chat.id));
+            rows.sort_by_key(|row| {
+                section
+                    .session_ids
+                    .iter()
+                    .position(|id| id == &row.chat.id)
+            });
         }
         if self.settings.sidebar_organization == SidebarOrganization::ByDevice {
             let local_device_id = self.state.read(cx).local_device_id.clone();
@@ -5919,12 +5906,10 @@ impl Shell {
                         .spaces
                         .iter()
                         .find(|space| zeron_proto::view::project_key(space) == key)
-                        .and_then(|space| {
-                            state.project_members(space).first().map(|m| m.id.clone())
-                        })
+                        .and_then(|space| state.project_members(space).first().map(|m| m.id.clone()))
                 })
                 .flatten();
-            let new_chat_button = group_space.clone().map(|project| {
+            let new_chat_button = group_space.map(|project| {
                 div()
                     .id(SharedString::from(format!(
                         "sidebar-group-new-chat-{collapse_key}"
@@ -5955,30 +5940,31 @@ impl Shell {
                     )
                     .into_any_element()
             });
-            let header = sidebar_disclosure_header(
-                theme,
-                group_icon,
-                visible_label,
-                collapsed.then_some(row_count),
-                new_chat_button,
-                chevron,
-            )
-            .group(group_name)
-            .id(SharedString::from(format!("sidebar-group-{collapse_key}")))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                let was_open = !this.sidebar_collapsed_groups.contains(&toggle_key);
-                this.begin_sidebar_disclosure_motion(
-                    &toggle_motion_key,
-                    if was_open { body_height } else { 0.0 },
-                    if was_open { 0.0 } else { body_height },
-                );
-                if was_open {
-                    this.sidebar_collapsed_groups.insert(toggle_key.clone());
-                } else {
-                    this.sidebar_collapsed_groups.remove(&toggle_key);
-                }
-                cx.notify();
-            }));
+            let header =
+                sidebar_disclosure_header(
+                    theme,
+                    group_icon,
+                    visible_label,
+                    collapsed.then_some(row_count),
+                    new_chat_button,
+                    chevron,
+                )
+                    .group(group_name)
+                .id(SharedString::from(format!("sidebar-group-{collapse_key}")))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let was_open = !this.sidebar_collapsed_groups.contains(&toggle_key);
+                    this.begin_sidebar_disclosure_motion(
+                        &toggle_motion_key,
+                        if was_open { body_height } else { 0.0 },
+                        if was_open { 0.0 } else { body_height },
+                    );
+                    if was_open {
+                        this.sidebar_collapsed_groups.insert(toggle_key.clone());
+                    } else {
+                        this.sidebar_collapsed_groups.remove(&toggle_key);
+                    }
+                    cx.notify();
+                }));
             let body = self.render_sidebar_disclosure_body(
                 &motion_key,
                 !collapsed,
@@ -6103,44 +6089,44 @@ impl Shell {
             None,
             chevron,
         )
-        .id("sessions-toggle")
-        .debug_selector(|| "sessions-toggle".into())
-        .on_drag_move::<SidebarSessionDrag>(cx.listener(
-            |this, event: &gpui::DragMoveEvent<SidebarSessionDrag>, _, _| {
-                if event.bounds.contains(&event.event.position) {
-                    let top = f32::from(
-                        event.bounds.bottom()
-                            - this.sidebar_scroll.bounds().top()
-                            - this.sidebar_scroll.offset().y,
-                    ) + SIDEBAR_DISCLOSURE_BODY_INSET;
-                    if let Some(drag) = this.sidebar_session_transfer.as_mut() {
-                        drag.preview = Some(SidebarSessionGap {
-                            group: "regular".into(),
-                            index: 0,
-                            pinned: false,
-                            top,
-                        });
+            .id("sessions-toggle")
+            .debug_selector(|| "sessions-toggle".into())
+            .on_drag_move::<SidebarSessionDrag>(cx.listener(
+                |this, event: &gpui::DragMoveEvent<SidebarSessionDrag>, _, _| {
+                    if event.bounds.contains(&event.event.position) {
+                        let top = f32::from(
+                            event.bounds.bottom()
+                                - this.sidebar_scroll.bounds().top()
+                                - this.sidebar_scroll.offset().y,
+                        ) + SIDEBAR_DISCLOSURE_BODY_INSET;
+                        if let Some(drag) = this.sidebar_session_transfer.as_mut() {
+                            drag.preview = Some(SidebarSessionGap {
+                                group: "regular".into(),
+                                index: 0,
+                                pinned: false,
+                                top,
+                            });
+                        }
                     }
-                }
-            },
-        ))
-        .on_drop::<SidebarSessionDrag>(cx.listener(|this, payload, _, cx| {
-            this.finish_sidebar_session_transfer(payload, SidebarSessionDrop::Regular, cx);
-        }))
-        .on_click(cx.listener(move |this, _, _, cx| {
-            this.cancel_sidebar_session_transfer(cx);
-            let was_open = this.sessions_open;
-            this.begin_sidebar_disclosure_motion(
-                "sessions",
-                if was_open { body_height } else { 0.0 },
-                if was_open { 0.0 } else { body_height },
-            );
-            this.sessions_open = !was_open;
-            this.sidebar_prev_order.clear();
-            this.sidebar_resort.clear();
-            this.sidebar_new_keys.clear();
-            cx.notify();
-        }));
+                },
+            ))
+            .on_drop::<SidebarSessionDrag>(cx.listener(|this, payload, _, cx| {
+                this.finish_sidebar_session_transfer(payload, SidebarSessionDrop::Regular, cx);
+            }))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.cancel_sidebar_session_transfer(cx);
+                let was_open = this.sessions_open;
+                this.begin_sidebar_disclosure_motion(
+                    "sessions",
+                    if was_open { body_height } else { 0.0 },
+                    if was_open { 0.0 } else { body_height },
+                );
+                this.sessions_open = !was_open;
+                this.sidebar_prev_order.clear();
+                this.sidebar_resort.clear();
+                this.sidebar_new_keys.clear();
+                cx.notify();
+            }));
         let content = div()
             .pt(px(SIDEBAR_DISCLOSURE_BODY_INSET))
             .child(content)
@@ -6246,19 +6232,19 @@ impl Shell {
             None,
             chevron,
         )
-        .id("archived-toggle")
-        .debug_selector(|| "archived-toggle".into())
-        .on_click(cx.listener(move |this, _, _, cx| {
-            let was_open = this.archived_open;
-            this.begin_sidebar_disclosure_motion(
-                "archived",
-                if was_open { body_height } else { 0.0 },
-                if was_open { 0.0 } else { body_height },
-            );
-            this.archived_open = !was_open;
-            this.archived_shown = INITIAL;
-            cx.notify();
-        }));
+            .id("archived-toggle")
+            .debug_selector(|| "archived-toggle".into())
+            .on_click(cx.listener(move |this, _, _, cx| {
+                let was_open = this.archived_open;
+                this.begin_sidebar_disclosure_motion(
+                    "archived",
+                    if was_open { body_height } else { 0.0 },
+                    if was_open { 0.0 } else { body_height },
+                );
+                this.archived_open = !was_open;
+                this.archived_shown = INITIAL;
+                cx.notify();
+            }));
         let section = div().flex().flex_col().child(header);
         let body = {
             let selected = self.state.read(cx).selected_chat.clone();
@@ -6815,7 +6801,9 @@ impl Shell {
         // Otherwise the user's GitHub repositories matching a name-like query
         // follow the folders (what Cloud reaches; GitHub connected).
         let needle = query.to_lowercase();
-        let github: Vec<FolderRow> = if needle.is_empty() || needle.starts_with(['/', '~', '.']) {
+        let github: Vec<FolderRow> = if needle.is_empty()
+            || needle.starts_with(['/', '~', '.'])
+        {
             Vec::new()
         } else {
             let mut repos: Vec<&zeron_proto::GithubRepo> = self
