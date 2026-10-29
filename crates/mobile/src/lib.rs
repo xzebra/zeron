@@ -13,6 +13,7 @@ pub mod layout;
 pub mod caption;
 pub mod orb;
 mod project_icon;
+pub mod terminal;
 pub mod wallpaper;
 pub mod visual;
 

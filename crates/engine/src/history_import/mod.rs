@@ -481,6 +481,8 @@ impl HistoryImporter {
             reasoning: None,
             model_options: Default::default(),
             sandbox: SandboxLevel::WorkspaceWrite,
+            access: Default::default(),
+            plan: false,
         };
         let workspace = &self.inner.workspace;
         workspace.create_chat(

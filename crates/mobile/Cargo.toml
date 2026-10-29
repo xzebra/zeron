@@ -43,3 +43,4 @@ image = { version = "0.25.10", default-features = false, features = ["png", "jpe
 zeron-syntax.workspace = true
 zatex = { workspace = true, features = ["bundled"] }
 thiserror.workspace = true
+zeron-term.workspace = true

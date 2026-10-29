@@ -1,5 +1,5 @@
-//! Settings → General: device-addressed worktree destination and branch
-//! prefix settings.
+//! Settings → General: device-addressed worktree location, branch prefix,
+//! and commit credit settings.
 
 use gpui::{AnyElement, Context, Entity, Render, Subscription, Task, Window, div, prelude::*, px};
 use zeron_proto::{
@@ -7,6 +7,7 @@ use zeron_proto::{
 };
 use zeron_rpc::methods;
 
+use super::search::{SearchAnchor, SettingId};
 use super::widgets;
 use crate::composer::{ComposerInput, ComposerInputEvent};
 use crate::icons;
@@ -31,6 +32,10 @@ pub(super) struct WorktreeSettingsCard {
     folder_task: Option<Task<()>>,
     branch_prefix: Entity<ComposerInput>,
     _branch_prefix_events: Subscription,
+    /// Whether agents' commits on the device credit Zeron.
+    credit: Loadable<zeron_engine::commit_credit::CommitCreditStatus>,
+    credit_saving: bool,
+    credit_task: Option<Task<()>>,
 }
 
 impl WorktreeSettingsCard {
@@ -64,6 +69,9 @@ impl WorktreeSettingsCard {
             folder_task: None,
             branch_prefix,
             _branch_prefix_events: branch_prefix_events,
+            credit: Loadable::Idle,
+            credit_saving: false,
+            credit_task: None,
         };
         card.load(None, cx);
         card
@@ -159,6 +167,107 @@ impl WorktreeSettingsCard {
         self.browsing = false;
         self.folders = Loadable::Idle;
         self.request(None, cx);
+        self.credit = Loadable::Loading;
+        self.request_credit(None, cx);
+    }
+
+    /// Read (or, with `save`, set) the device's commit credit.
+    fn request_credit(&mut self, save: Option<bool>, cx: &mut Context<Self>) {
+        let Some(engine) = self.state.read(cx).engine().cloned() else {
+            self.credit = Loadable::Error("Device is not connected".into());
+            cx.notify();
+            return;
+        };
+        self.credit_saving = save.is_some();
+        let (method, mut params) = match save {
+            Some(enabled) => (
+                methods::SET_COMMIT_CREDIT,
+                serde_json::json!({ "enabled": enabled }),
+            ),
+            None => (methods::GET_COMMIT_CREDIT, serde_json::json!({})),
+        };
+        params["targetDeviceId"] = serde_json::json!(self.target);
+        self.credit_task = Some(cx.spawn(async move |this, cx| {
+            let result = engine
+                .client()
+                .call(method, params)
+                .await
+                .map_err(|error| match error {
+                    zeron_rpc::RpcError::UnknownMethod(_) => {
+                        "Update Zeron on the selected device to change this.".to_string()
+                    }
+                    _ => error.to_string(),
+                })
+                .and_then(|value| {
+                    serde_json::from_value::<zeron_engine::commit_credit::CommitCreditStatus>(value)
+                        .map_err(|error| error.to_string())
+                });
+            this.update(cx, |card, cx| {
+                card.credit_saving = false;
+                match result {
+                    Ok(status) => card.credit = Loadable::Ready(status),
+                    Err(error) => card.credit = Loadable::Error(error),
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
+    }
+
+    fn toggle_credit(&mut self, cx: &mut Context<Self>) {
+        let Some(status) = self.credit.ready() else {
+            return;
+        };
+        if status.cloud || self.credit_saving {
+            return;
+        }
+        let next = !status.enabled;
+        self.request_credit(Some(next), cx);
+    }
+
+    fn render_credit_row(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let status = self.credit.ready();
+        let enabled = status.is_some_and(|s| s.enabled);
+        let interactive = status.is_some_and(|s| !s.cloud) && !self.credit_saving;
+        let meta = match &self.credit {
+            Loadable::Ready(s) if s.cloud => "Always on for Cloud".to_string(),
+            Loadable::Ready(_) => "Agents' commits add zeronsh[bot] as a co-author".to_string(),
+            Loadable::Error(error) => error.clone(),
+            _ => "Loading…".to_string(),
+        };
+        widgets::card_row(theme, false)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(160.0))
+                    .child(widgets::row_title(theme, "Credit Zeron in commits"))
+                    .child(widgets::meta_line(
+                        theme,
+                        vec![div().truncate().child(meta).into_any_element()],
+                    )),
+            )
+            .child(
+                widgets::toggle_switch(theme, enabled, "commit-credit")
+                    .id("commit-credit-toggle")
+                    .flex_none()
+                    .role(gpui::Role::Switch)
+                    .aria_label("Credit Zeron in commits")
+                    .aria_toggled(if enabled {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
+                    .when(interactive, |el| {
+                        el.cursor_pointer()
+                            .tab_index(0)
+                            .focus_visible(|s| s.border_2().border_color(theme.accent))
+                            .on_click(cx.listener(|card, _, _, cx| card.toggle_credit(cx)))
+                    })
+                    .when(!interactive, |el| el.opacity(0.5)),
+            )
+            .search_anchor(SettingId::CommitCredit)
+            .into_any_element()
     }
 
     fn request(&mut self, save: Option<WorktreeSettings>, cx: &mut Context<Self>) {
@@ -668,14 +777,16 @@ impl Render for WorktreeSettingsCard {
                             .child(widgets::row_title(&theme, "Custom worktree location"))
                             .child(widgets::meta_line(&theme, meta)),
                     )
-                    .child(controls),
+                    .child(controls)
+                    .search_anchor(SettingId::WorktreeLocation),
             )
             .children(browser)
             .children(branch_prefix)
             .when_some(error, |card, error| {
                 card.child(detail().child(widgets::error_strip(&theme, error).mt(px(8.0))))
-            });
-        widgets::section(&theme, "Worktrees", card).into_any_element()
+            })
+            .child(self.render_credit_row(&theme, cx));
+        widgets::section(&theme, "Git", card).into_any_element()
     }
 }
 

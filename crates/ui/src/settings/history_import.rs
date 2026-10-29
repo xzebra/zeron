@@ -109,7 +109,7 @@ impl HistoryImportCard {
             }));
         let import_all = widgets::text_action(
             theme,
-            ActionTone::Outlined,
+            ActionTone::Filled,
             if remaining > 0 {
                 format!("Import all ({remaining})")
             } else {
