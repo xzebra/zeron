@@ -325,6 +325,7 @@ impl Shell {
                 )
                 .into_any_element()
         });
+        let hold_header = drag.is_some();
         let header = spaces::sidebar_disclosure_header(
             theme,
             None,
@@ -368,6 +369,15 @@ impl Shell {
                 cx.new(|_| DragGhost)
             })
         });
+        let header = if hold_header {
+            crate::hold_to_drag::hold_to_drag(
+                SharedString::from(format!("hold-section-{id}")),
+                header,
+            )
+            .into_any_element()
+        } else {
+            header.into_any_element()
+        };
         let content = div()
             .w_full()
             .flex()
@@ -1230,6 +1240,7 @@ mod tests {
             })
             .unwrap();
         let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        cx.update(|window, _| window.activate_window());
         cx.simulate_resize(gpui::size(px(1200.0), px(900.0)));
         cx.run_until_parked();
         let order = |cx: &mut gpui::VisualTestContext| {
@@ -1249,6 +1260,10 @@ mod tests {
         let to = gpui::point(from.x, last.bottom() + px(30.0));
         let nudge = gpui::point(px(0.0), px(6.0));
         cx.simulate_mouse_down(from, MouseButton::Left, none);
+        cx.simulate_mouse_move(from + nudge, Some(MouseButton::Left), none);
+        cx.update(|_, cx| assert!(!cx.has_active_drag(), "movement must not bypass the hold"));
+        cx.executor().advance_clock(crate::hold_to_drag::HOLD_DELAY);
+        cx.run_until_parked();
         // The first move lifts the section where it sits; it then follows.
         cx.simulate_mouse_move(from + nudge, Some(MouseButton::Left), none);
         cx.update(|_, cx| assert!(cx.has_active_drag(), "section drag never started"));
@@ -1267,6 +1282,8 @@ mod tests {
         let from = cx.debug_bounds("section-header-b").unwrap().center();
         let outside = gpui::point(px(900.0), from.y + px(200.0));
         cx.simulate_mouse_down(from, MouseButton::Left, none);
+        cx.executor().advance_clock(crate::hold_to_drag::HOLD_DELAY);
+        cx.run_until_parked();
         cx.simulate_mouse_move(from + nudge, Some(MouseButton::Left), none);
         cx.simulate_mouse_move(outside, Some(MouseButton::Left), none);
         cx.simulate_mouse_up(outside, MouseButton::Left, none);

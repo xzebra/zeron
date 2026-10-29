@@ -8437,7 +8437,10 @@ impl Shell {
         } else {
             text.opacity(0.8)
         };
-        div()
+        let hold_id = drag
+            .as_ref()
+            .map(|_| SharedString::from(format!("hold-{row_id}")));
+        let row = div()
             .id(SharedString::from(row_id.clone()))
             .group("sidebar-session-row")
             .debug_selector({
@@ -8869,7 +8872,12 @@ impl Shell {
                         }),
                 )
             })
-            .into_any_element()
+            .into_any_element();
+        if let Some(id) = hold_id {
+            crate::hold_to_drag::hold_to_drag(id, row).into_any_element()
+        } else {
+            row
+        }
     }
 
     fn render_pinned_session_group(
@@ -19113,9 +19121,8 @@ mod settings_modal_regressions {
     ) {
         let dir = tempfile::tempdir().unwrap();
         init_settings_test(settings::UiSettings::default(), dir.path(), cx);
-        let (shell, cx) = cx.add_window_view(|_, cx| test_shell(dir.path(), cx));
-        cx.simulate_resize(gpui::size(px(1200.0), px(800.0)));
-        shell.update(cx, |shell, cx| {
+        let (shell, cx) = cx.add_window_view(|_, cx| {
+            let mut shell = test_shell(dir.path(), cx);
             shell.debug_gate = Some(GatePhase::Ready);
             shell.splash = SplashPhase::Gone;
             shell.reduced_motion = true;
@@ -19138,12 +19145,22 @@ mod settings_modal_regressions {
                 state.selected_chat = Some("newer".into());
             });
             shell.active_chat = "newer".into();
+            shell
         });
+        cx.update(|window, _| window.activate_window());
+        cx.simulate_resize(gpui::size(px(1200.0), px(800.0)));
         cx.run_until_parked();
-        cx.update(|window, cx| window.draw(cx).clear());
+        // Cached sidebar frames do not republish debug selectors. Force a
+        // fresh paint before locating the source row.
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear();
+        });
         let row = cx.debug_bounds("chat-older").expect("sidebar row");
         let from = row.center();
         cx.simulate_mouse_down(from, MouseButton::Left, gpui::Modifiers::default());
+        cx.executor().advance_clock(crate::hold_to_drag::HOLD_DELAY);
+        cx.run_until_parked();
         // Several frames of dragging, inside the sidebar and then out of it.
         for step in 1..=6 {
             let x = from.x + px(4.0 + 120.0 * step as f32);

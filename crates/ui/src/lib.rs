@@ -37,6 +37,7 @@ pub mod files;
 pub mod frost;
 mod glass;
 mod haptics;
+mod hold_to_drag;
 pub mod history;
 pub mod icons;
 pub(crate) mod image_media;

@@ -1278,6 +1278,8 @@ mod pinned_session_tests {
                 shell
             }))
         });
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
         let shell = host.read_with(cx, |host, _| host.0.clone());
 
         // Archived rows share geometry and metadata in every sidebar layout.
@@ -1367,6 +1369,14 @@ mod pinned_session_tests {
             Some(MouseButton::Left),
             gpui::Modifiers::default(),
         );
+        cx.update(|_, cx| assert!(!cx.has_active_drag(), "movement must not bypass the hold"));
+        cx.executor().advance_clock(crate::hold_to_drag::HOLD_DELAY);
+        cx.run_until_parked();
+        cx.simulate_mouse_move(
+            from + gpui::point(px(8.0), px(0.0)),
+            Some(MouseButton::Left),
+            gpui::Modifiers::default(),
+        );
         let dragged_card = cx.debug_bounds("chat-older").unwrap();
         assert!(cx.debug_bounds("drag-chat-older").is_none());
         assert_eq!(dragged_card.size, source_bounds.size);
@@ -1403,6 +1413,8 @@ mod pinned_session_tests {
         // The transient empty Pinned header accepts the first pin.
         let from = cx.debug_bounds("chat-older").unwrap().center();
         cx.simulate_mouse_down(from, MouseButton::Left, gpui::Modifiers::default());
+        cx.executor().advance_clock(crate::hold_to_drag::HOLD_DELAY);
+        cx.run_until_parked();
         cx.simulate_mouse_move(
             from + gpui::point(px(8.0), px(0.0)),
             Some(MouseButton::Left),
@@ -1448,6 +1460,8 @@ mod pinned_session_tests {
         // A single pin can leave Pinned and returns to its activity position.
         let from = cx.debug_bounds("chat-older").unwrap().center();
         cx.simulate_mouse_down(from, MouseButton::Left, gpui::Modifiers::default());
+        cx.executor().advance_clock(crate::hold_to_drag::HOLD_DELAY);
+        cx.run_until_parked();
         cx.simulate_mouse_move(
             from + gpui::point(px(8.0), px(0.0)),
             Some(MouseButton::Left),
@@ -1489,6 +1503,8 @@ mod pinned_session_tests {
         // A live activity update still wins while the normal session is dragged.
         let from = cx.debug_bounds("chat-older").unwrap().center();
         cx.simulate_mouse_down(from, MouseButton::Left, gpui::Modifiers::default());
+        cx.executor().advance_clock(crate::hold_to_drag::HOLD_DELAY);
+        cx.run_until_parked();
         cx.simulate_mouse_move(
             from + gpui::point(px(8.0), px(0.0)),
             Some(MouseButton::Left),
@@ -1521,6 +1537,8 @@ mod pinned_session_tests {
         });
         let from = cx.debug_bounds("chat-newer").unwrap().center();
         cx.simulate_mouse_down(from, MouseButton::Left, gpui::Modifiers::default());
+        cx.executor().advance_clock(crate::hold_to_drag::HOLD_DELAY);
+        cx.run_until_parked();
         cx.simulate_mouse_move(
             from + gpui::point(px(8.0), px(0.0)),
             Some(MouseButton::Left),
@@ -1540,6 +1558,8 @@ mod pinned_session_tests {
         // Dropping outside the sections cancels; it must not unpin the source.
         let from = cx.debug_bounds("chat-newer").unwrap().center();
         cx.simulate_mouse_down(from, MouseButton::Left, gpui::Modifiers::default());
+        cx.executor().advance_clock(crate::hold_to_drag::HOLD_DELAY);
+        cx.run_until_parked();
         cx.simulate_mouse_move(
             from + gpui::point(px(8.0), px(0.0)),
             Some(MouseButton::Left),
@@ -1577,6 +1597,8 @@ mod pinned_session_tests {
         // Remote pin changes invalidate an in-flight snapshot instead of being overwritten.
         let from = cx.debug_bounds("chat-older").unwrap().center();
         cx.simulate_mouse_down(from, MouseButton::Left, gpui::Modifiers::default());
+        cx.executor().advance_clock(crate::hold_to_drag::HOLD_DELAY);
+        cx.run_until_parked();
         cx.simulate_mouse_move(
             from + gpui::point(px(8.0), px(0.0)),
             Some(MouseButton::Left),
@@ -1604,6 +1626,8 @@ mod pinned_session_tests {
         // Even with no regular rows, a temporary destination can unpin one.
         let from = cx.debug_bounds("chat-newer").unwrap().center();
         cx.simulate_mouse_down(from, MouseButton::Left, gpui::Modifiers::default());
+        cx.executor().advance_clock(crate::hold_to_drag::HOLD_DELAY);
+        cx.run_until_parked();
         cx.simulate_mouse_move(
             from + gpui::point(px(8.0), px(0.0)),
             Some(MouseButton::Left),
@@ -1626,6 +1650,8 @@ mod pinned_session_tests {
         // Dropping in the lower half of a pinned row inserts after that row.
         let from = cx.debug_bounds("chat-newer").unwrap().center();
         cx.simulate_mouse_down(from, MouseButton::Left, gpui::Modifiers::default());
+        cx.executor().advance_clock(crate::hold_to_drag::HOLD_DELAY);
+        cx.run_until_parked();
         cx.simulate_mouse_move(
             from + gpui::point(px(8.0), px(0.0)),
             Some(MouseButton::Left),
@@ -1653,6 +1679,8 @@ mod pinned_session_tests {
         });
         let from = cx.debug_bounds("chat-newer").unwrap().center();
         cx.simulate_mouse_down(from, MouseButton::Left, gpui::Modifiers::default());
+        cx.executor().advance_clock(crate::hold_to_drag::HOLD_DELAY);
+        cx.run_until_parked();
         cx.simulate_mouse_move(
             from + gpui::point(px(8.0), px(0.0)),
             Some(MouseButton::Left),
@@ -1724,6 +1752,8 @@ mod pinned_session_tests {
         });
         let from = cx.debug_bounds("chat-older").unwrap().center();
         cx.simulate_mouse_down(from, MouseButton::Left, gpui::Modifiers::default());
+        cx.executor().advance_clock(crate::hold_to_drag::HOLD_DELAY);
+        cx.run_until_parked();
         cx.simulate_mouse_move(
             from + gpui::point(px(8.0), px(0.0)),
             Some(MouseButton::Left),
